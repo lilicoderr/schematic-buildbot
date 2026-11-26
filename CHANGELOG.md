@@ -15,6 +15,10 @@
 - `--dry-run` reports which block states will be reproduced exactly and which fall back to the default.
 - CI: `clippy -D warnings` and a bilingual `--dry-run` smoke test.
 
+- Collision-aware walking (`path.rs` BFS): the bot routes around its own structure; `walk_to` gives up after ~1 s without progress instead of ~80 s.
+- `blueprints/state-lab.txt` (top-half stairs, horizontal logs, furnace, chest, door).
+- Verified live on vanilla 1.21.1 (RCON block queries): stair-tower 51/51, state-lab 26 + door half, `--resume`.
+
 ### Changed
 - README is now English-first; the Korean version moved to `README.ko.md`.
 - Source comments, blueprints, CHANGELOG and CONTRIBUTING are in English.
@@ -25,7 +29,7 @@
 - Remaining clippy warnings.
 - `preview.py` strips block-state brackets and colours stairs/slabs like their base material.
 
-## 0.2.0 (unreleased tag)
+## Earlier (untagged)
 
 - `.litematic` parser (multi-region, bit-packed palette), `--dry-run` ASCII layer map with floating-block warnings,
   `--delay-ms`, stdlib-only `tools/preview.py`.

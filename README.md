@@ -178,11 +178,19 @@ tools/preview.py      blueprint → isometric PNG
 - `cargo test --workspace` (50+ unit tests, no server needed): VarInt/Position/zlib/MD5 vectors,
   blueprint and `.schem`/`.litematic` parsing, build ordering, the block-state planner, progress file,
   version table. CI also runs `clippy -D warnings` and a bilingual `--dry-run` smoke test.
-- Live server (local vanilla 1.21.1, creative, offline): the 3×3×3 cottage built **25/25 blocks with no kick**,
-  confirmed by block counts over RCON.
-- **Not yet verified on a live server:** the block-state clicks (stairs/slabs/logs/doors) and `--resume`.
-  The planner is unit-tested against the vanilla placement rules, but real-server screenshots are still
-  to come. Treat states as experimental and read the `--dry-run` / run summary for what fell back to defaults.
+- Live server (local vanilla 1.21.1, creative, offline), checked block by block over RCON
+  (`execute if block … <state>`), no kick in any run:
+
+  | Blueprint | Result |
+  |---|---|
+  | `cottage.txt` | 25/25 blocks |
+  | `stair-tower.txt` | 51/51: double slab, stairs `facing=north/east`, bottom slabs, vertical logs all matched |
+  | `state-lab.txt` | 26 placed + door upper half auto-created: top-half stairs, `axis=x` logs, furnace, chest, door matched |
+  | `--resume` | killed at 39/51, resumed: 12 more blocks, structure complete, progress file removed |
+
+- **Not verified live:** other servers/forks (Paper, Spigot, …), versions other than 1.21.1, door hinges, trapdoors,
+  buttons and other families listed as unsupported. Real-server screenshots are still to come; the table above is
+  from server-side block queries, not images.
 
 ## Contributing
 
