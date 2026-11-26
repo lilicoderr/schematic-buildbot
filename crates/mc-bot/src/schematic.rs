@@ -108,6 +108,18 @@ impl Schematic {
         v
     }
 
+    /// Blocks with nothing directly below them (above the lowest layer).
+    /// The bot places by clicking the block underneath, so these need a temporary support.
+    pub fn floating_blocks(&self) -> Vec<&Block> {
+        use std::collections::HashSet;
+        let set: HashSet<(i32, i32, i32)> = self.blocks.iter().map(|b| (b.pos.x, b.pos.y, b.pos.z)).collect();
+        let (min, _) = self.bounds();
+        self.blocks
+            .iter()
+            .filter(|b| b.pos.y > min.y && !set.contains(&(b.pos.x, b.pos.y - 1, b.pos.z)))
+            .collect()
+    }
+
     /// 블록 이름별 개수 (많은 순).
     pub fn block_counts(&self) -> Vec<(String, usize)> {
         use std::collections::BTreeMap;
@@ -211,6 +223,20 @@ mod tests {
         assert!(a.contains("layer y=0\n##\n#A\n"));
         assert!(a.contains("#=stone"));
         assert!(a.contains("A=glass"));
+    }
+
+    #[test]
+    fn floating_blocks_detected() {
+        let s = Schematic::parse("palette S stone\nlayer 0\nS.\nlayer 1\nSS\n").unwrap();
+        let f = s.floating_blocks();
+        assert_eq!(f.len(), 1);
+        assert_eq!((f[0].pos.x, f[0].pos.y), (1, 1));
+    }
+
+    #[test]
+    fn supported_tower_has_no_floating() {
+        let s = Schematic::parse("palette S stone\nlayer 0\nS\nlayer 1\nS\nlayer 2\nS\n").unwrap();
+        assert!(s.floating_blocks().is_empty());
     }
 
     #[test]

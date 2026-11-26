@@ -38,6 +38,7 @@ build-bot — 설계도대로 Minecraft 1.21.1 오프라인 서버에 건축
 사용법:
   build-bot [host:port] [이름] [설계도.txt]        건축 실행 (기본 127.0.0.1:25566, BuildBot)
   build-bot [host:port] [이름] <설계도.txt> --dry-run   서버 없이 설계도만 검증
+  build-bot ... --delay-ms <N>                      설치 간 대기(기본 25ms). 패킷 속도 제한이 엄격한 서버용
   build-bot --help                                  이 도움말
 
 예시:
@@ -72,7 +73,13 @@ fn main() {
         return;
     }
 
-    if let Err(e) = run(target, &host, port, name, &schem) {
+    let delay_ms: u64 = args
+        .iter()
+        .position(|a| a == "--delay-ms")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(25);
+    if let Err(e) = run(target, &host, port, name, &schem, Duration::from_millis(delay_ms)) {
         eprintln!("[오류] {e}");
         std::process::exit(1);
     }
@@ -116,6 +123,10 @@ fn print_summary(schem: &Schematic) {
         min.x, max.x, min.y, max.y, min.z, max.z, schem.blocks.len()
     );
     println!("\n{}", schem.ascii_layers());
+    let floating = schem.floating_blocks();
+    if !floating.is_empty() {
+        println!("※ 아래가 비어 있는(공중) 블록 {}개 — 받침이 없어 설치가 거부될 수 있습니다.\n", floating.len());
+    }
     let mut unknown = Vec::new();
     println!("블록 종류:");
     for (name, count) in schem.block_counts() {
@@ -130,9 +141,10 @@ fn print_summary(schem: &Schematic) {
     }
 }
 
-fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic) -> io::Result<()> {
+fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, delay: Duration) -> io::Result<()> {
     println!("=== 접속 ({addr} as {name}) ===");
     let (mut bot, _join) = PlayClient::join(addr, host, port, name)?;
+    bot.place_delay = delay;
     if let Some(reason) = &bot.kicked {
         println!("킥됨: {reason}");
         return Ok(());

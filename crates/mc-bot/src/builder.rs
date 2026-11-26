@@ -23,6 +23,8 @@ pub struct PlayClient {
     pub seq: i32,
     held_item: i32,
     pub kicked: Option<String>,
+    /// Pause after each placement; raise it on servers with strict packet-rate limits.
+    pub place_delay: Duration,
 }
 
 impl PlayClient {
@@ -36,6 +38,7 @@ impl PlayClient {
             seq: 0,
             held_item: -1,
             kicked: None,
+            place_delay: Duration::from_millis(25),
         };
         client.conn.set_read_timeout(Some(Duration::from_millis(50)))?;
         // 첫 동기화(teleport)를 받아 위치를 확정할 때까지 펌프
@@ -216,7 +219,7 @@ impl PlayClient {
         self.set_creative_held(item_id)?;
         self.send_pos_look(true)?;
         self.use_item_on(support, Face::Up, (0.5, 1.0, 0.5))?;
-        self.idle(Duration::from_millis(25))?;
+        self.idle(self.place_delay)?;
         Ok(true)
     }
 }

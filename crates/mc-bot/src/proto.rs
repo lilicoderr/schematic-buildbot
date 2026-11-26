@@ -81,8 +81,7 @@ pub fn login_offline(
                 break;
             }
             ids::CB_LOGIN_ENCRYPTION_REQUEST => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "서버가 암호화(온라인 모드)를 요구합니다. 테스트는 online-mode=false 서버로 하세요.",
                 ));
             }

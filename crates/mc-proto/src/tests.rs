@@ -44,15 +44,15 @@ fn fixed_width_and_string() {
     b.write_u16(0xBEEF);
     b.write_i32(-123456);
     b.write_i64(i64::MIN);
-    b.write_f64(3.14159);
+    b.write_f64(1234.5678);
     b.write_bool(true);
     b.write_string("안녕 minecraft");
     let mut r = PacketBuf::from_vec(b.into_vec());
     assert_eq!(r.read_u16().unwrap(), 0xBEEF);
     assert_eq!(r.read_i32().unwrap(), -123456);
     assert_eq!(r.read_i64().unwrap(), i64::MIN);
-    assert!((r.read_f64().unwrap() - 3.14159).abs() < 1e-9);
-    assert_eq!(r.read_bool().unwrap(), true);
+    assert!((r.read_f64().unwrap() - 1234.5678).abs() < 1e-9);
+    assert!(r.read_bool().unwrap());
     assert_eq!(r.read_string().unwrap(), "안녕 minecraft");
     assert_eq!(r.remaining(), 0);
 }
