@@ -51,9 +51,38 @@ fn main() {
         std::process::exit(1);
     });
 
+    // --dry-run: 서버 접속 없이 설계도만 검증·요약
+    if args.iter().any(|a| a == "--dry-run" || a == "--validate") {
+        print_summary(&schem);
+        return;
+    }
+
     if let Err(e) = run(target, &host, port, name, &schem) {
         eprintln!("[오류] {e}");
         std::process::exit(1);
+    }
+}
+
+// 설계도 검증·요약 (서버 불필요). 알 수 없는 블록도 표시.
+fn print_summary(schem: &Schematic) {
+    let (min, max) = schem.bounds();
+    println!("=== 설계도 검증: '{}' ===", schem.name);
+    println!(
+        "크기 {}x{}x{} (x {}..{}, y {}..{}, z {}..{}), 총 {}블록",
+        max.x - min.x + 1, max.y - min.y + 1, max.z - min.z + 1,
+        min.x, max.x, min.y, max.y, min.z, max.z, schem.blocks.len()
+    );
+    let mut unknown = Vec::new();
+    println!("블록 종류:");
+    for (name, count) in schem.block_counts() {
+        let ok = blocks::item_id(&name).is_some();
+        if !ok { unknown.push(name.clone()); }
+        println!("  {:>5}  {}{}", count, name, if ok { "" } else { "  ← 미등록(설치 불가)" });
+    }
+    if unknown.is_empty() {
+        println!("모든 블록이 설치 가능합니다. ✅");
+    } else {
+        println!("미등록 블록 {}종: {} — blocks.rs 에 없는 이름입니다.", unknown.len(), unknown.join(", "));
     }
 }
 

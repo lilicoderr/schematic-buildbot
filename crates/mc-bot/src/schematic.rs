@@ -108,6 +108,18 @@ impl Schematic {
         v
     }
 
+    /// 블록 이름별 개수 (많은 순).
+    pub fn block_counts(&self) -> Vec<(String, usize)> {
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<String, usize> = BTreeMap::new();
+        for b in &self.blocks {
+            *map.entry(b.name.clone()).or_insert(0) += 1;
+        }
+        let mut v: Vec<_> = map.into_iter().collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        v
+    }
+
     pub fn bounds(&self) -> (BlockPos, BlockPos) {
         let mut min = self.blocks[0].pos;
         let mut max = self.blocks[0].pos;
@@ -150,6 +162,14 @@ mod tests {
     #[test]
     fn empty_is_error() {
         assert!(Schematic::parse("palette S stone\nlayer 0\n...\n").is_err());
+    }
+
+    #[test]
+    fn block_counts_sorted() {
+        let s = Schematic::parse("palette S stone\npalette G glass\nlayer 0\nSSG\nSSS\n").unwrap();
+        let counts = s.block_counts();
+        assert_eq!(counts[0], ("stone".to_string(), 5));
+        assert_eq!(counts[1], ("glass".to_string(), 1));
     }
 
     #[test]
