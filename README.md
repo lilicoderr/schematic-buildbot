@@ -1,8 +1,10 @@
 <h1 align="center">schematic-buildbot</h1>
 
+<p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
+
 <p align="center">
-  <b>Minecraft 설계도(<code>.schem</code>)를 URL 한 줄로 받아 서버에 대신 지어주는 Rust 봇</b><br>
-  프로토콜(1.21.1 / 767)을 라이브러리 없이 손으로 구현 · 공중부양/과속 없이 걸어 다니며 건축 · 킥 없음
+  <b>A Rust bot that downloads a Minecraft schematic from a URL and builds it on your server.</b><br>
+  Hand-written protocol (1.21.1 / 767), no libraries · walks like a player, never flies or speeds · block states supported
 </p>
 
 <p align="center">
@@ -14,129 +16,180 @@
 </p>
 
 <p align="center">
-  <img src="docs/cottage.png" alt="cottage preview" width="220">
-  <img src="docs/pixel-heart.png" alt="pixel heart preview" width="260">
+  <img src="docs/cottage.png" alt="cottage preview" width="200">
+  <img src="docs/stair-tower.png" alt="stair tower preview" width="200">
+  <img src="docs/pixel-heart.png" alt="pixel heart preview" width="240">
 </p>
-<p align="center"><sub>`tools/preview.py` 로 렌더한 설계도 미리보기 (서버 없이 생성)</sub></p>
+<p align="center"><sub>Blueprint previews rendered by <code>tools/preview.py</code> (no server needed)</sub></p>
 
-## 한눈에 보기
+## At a glance
 
 ```bash
-# 설계도 공유 사이트의 .schem 직링크를 그대로 넣으면, 받아서 지어준다 (딸깍)
+# Paste a direct .schem / .litematic link from a schematic site: it downloads and builds.
 build-bot 127.0.0.1:25565 MyBot https://example.com/castle.schem
 
-# 서버 없이 검증만: 크기·블록 종류·층별 ASCII 도면·공중 블록 경고
+# Validate offline: size, block list, layer map, which block states can be reproduced.
 build-bot x x castle.schem --dry-run
+
+# Interrupted (kick, crash, Ctrl-C)? Continue exactly where it stopped.
+build-bot 127.0.0.1:25565 MyBot castle.schem --resume
 ```
 
 ```text
-=== 설계도 검증: '작은 오두막' ===
-크기 3x3x3, 총 25블록
-
-layer y=0      layer y=1      layer y=2
-###            #B#            AAA
-#.#            B.B            AAA
-###            #B#            AAA
-legend: #=white_concrete A=red_concrete B=glass
-모든 블록이 설치 가능합니다. ✅
+=== blueprint check: 'Stair tower' ===
+size 5x3x5 (x 0..4, y 0..2, z 0..4), 51 blocks
+block types:
+     33  stone_bricks
+     12  oak_log
+      4  stone_slab
+      2  oak_stairs
+All blocks can be placed.
+...
+block states: 18 blocks carry states; 18 will match exactly, 0 second-half blocks are placed automatically
 ```
 
-## 기능
+## Features
 
-| 기능 | 상태 |
+| Feature | Status |
 |---|---|
-| 프로토콜 직접 구현 (핸드셰이크·로그인·Configuration·Play, zlib 압축, 오프라인 UUID) | ✅ |
-| `.schem` (Sponge v2/v3) 설계도 + 텍스트 레이어 포맷 | ✅ |
-| URL 로 바로 받아 건축 (`http(s)://…/x.schem`) | ✅ |
-| 블록 1333종 지원 (블록→아이템 ID 테이블) | ✅ |
-| `--dry-run` 검증 + 층별 ASCII 도면 + 공중 블록 경고 | ✅ |
-| 걸어 다니며 설치 (`on_ground`, 틱당 걷기 속도 이하) — anti-cheat 안전 | ✅ |
-| `--delay-ms` 로 설치 속도 제한 (패킷 레이트 제한 서버용) | ✅ |
-| `tools/preview.py` — 설계도 → 아이소메트릭 PNG (Python 표준 라이브러리만) | ✅ |
-| 블록 상태(계단 방향·반블록 위치 등) | 🚧 현재는 기본 상태로 설치 |
-| `.litematic` (Litematica, 다중 리전 · 비트 패킹 팔레트) | ✅ |
-| 다른 버전 서버 | 🚧 [ViaProxy](https://github.com/ViaVersion/ViaProxy) 경유 · 패킷 ID 표 분리 예정 |
-| 생존 모드 + 상자에서 자재 꺼내기 | 🚧 필요한 패킷 ID 는 매핑됨 |
+| Hand-written protocol: handshake, login, Configuration, Play, zlib, offline UUIDs | ✅ |
+| `.schem` (Sponge v2/v3), `.litematic` (multi-region) and a plain-text layer format | ✅ |
+| Build straight from a URL (`http(s)://…/x.schem`) | ✅ |
+| 1333 block types (block → item id table) | ✅ |
+| **Block states**: stairs facing/half, slabs bottom/top/double, log axis, door/bed/furnace/chest facing | ✅ see [How states work](#block-states) |
+| Anchored build order: overhangs are built from neighbours, floating islands are reported | ✅ |
+| `--dry-run`: layer map, unregistered blocks, state report, floating-block warning | ✅ |
+| Walks on the ground (`on_ground`, below walking speed): no fly/speed kicks | ✅ |
+| `--rate` / `--delay-ms`: cap the placement rate for strict servers | ✅ |
+| `--resume`: continue an interrupted build from a progress file | ✅ |
+| `--lang en\|ko`, `BUILDBOT_LANG`: English and Korean output | ✅ |
+| `tools/preview.py`: blueprint → isometric PNG (Python standard library only) | ✅ |
+| Other Minecraft versions | 🚧 version table + `--version` exist; only 1.21 / 1.21.1 have a verified packet-id table. Others via [ViaProxy](https://github.com/ViaVersion/ViaProxy) |
+| Survival mode, taking materials from chests | 🚧 needed packet ids are mapped |
 
-## 빌드 · 실행
+## Install & run
 
 ```bash
 cargo build --release
 
-./target/release/build-bot 127.0.0.1:25566 BuildBot blueprints/cottage.txt        # 건축
-./target/release/build-bot x x blueprints/cottage.txt --dry-run                     # 검증만
-./target/release/packet-probe probe 127.0.0.1:25566 ProbeBot 6                     # 패킷 6초 수집·분류
-python tools/preview.py blueprints/cottage.txt -o docs/cottage.png --scale 36       # 미리보기 PNG
+./target/release/build-bot 127.0.0.1:25566 BuildBot blueprints/cottage.txt         # build
+./target/release/build-bot x x blueprints/stair-tower.txt --dry-run                # validate only
+./target/release/packet-probe probe 127.0.0.1:25566 ProbeBot 6                     # sample and classify packets for 6 s
+python tools/preview.py blueprints/cottage.txt -o docs/cottage.png --scale 36      # preview PNG
 ```
 
-대상은 `online-mode=false`(오프라인) 서버. 로컬 테스트는 바닐라 1.21.1 을 `online-mode=false`, `gamemode=creative` 로 띄우면 된다
-(봇은 크리에이티브에서 블록을 손에 들어 설치한다).
+Targets `online-mode=false` (offline) servers. For local testing run vanilla 1.21.1 with
+`online-mode=false` and `gamemode=creative` (the bot puts blocks in hand via creative slots).
 
-> 온라인 모드(Mojang 인증/암호화)는 범위 밖이다. 남의 서버에서는 반드시 서버 운영자의 허락을 받고 사용할 것.
+> Online mode (Mojang auth/encryption) is out of scope. Only use this on servers whose operator allows it.
 
-## 설계도 포맷
+### Options
 
-`.schem` 외에, 손으로 그리기 쉬운 레이어/팔레트 텍스트도 지원한다 (`blueprints/` 참고).
+| Option | Meaning |
+|---|---|
+| `--dry-run` | validate and print a report, then exit (no server needed) |
+| `--delay-ms N` / `--rate N` | pause after each placement / cap placements per second |
+| `--version V` | Minecraft version to announce (default `1.21.1`) |
+| `--resume`, `--progress-file F` | continue from `.buildbot-progress` (or `F`) |
+| `--lang en\|ko` | output language (also `BUILDBOT_LANG`; defaults to your locale) |
+
+## Block states
+
+In vanilla the placed state is decided by the **click**, not the item: clicked face, cursor
+position inside that face, and the player's horizontal facing. `placement.rs` turns a wanted
+state into those inputs:
+
+| Block family | State | How the bot gets it |
+|---|---|---|
+| stairs, doors, fence gates, beds | `facing` | looks along `facing` while clicking |
+| furnaces, chests, carved pumpkins, glazed terracotta, … | `facing` | looks the opposite way |
+| stairs | `half=top` | clicks the underside of the block above, or the upper half of a neighbour's side |
+| slabs | `type=top/double` | same as stairs; `double` clicks twice |
+| logs, pillars, hay/bone blocks | `axis=x/z` | clicks a face along the axis on a neighbouring block |
+
+Anything the surroundings do not allow (no neighbour to click) falls back to the default state and is
+listed in the run summary and in `--dry-run`. Upper door halves and bed heads are skipped because the
+server creates them with the first half. Trapdoors, buttons, levers and 6-way blocks currently use
+the default state.
+
+## Blueprint format
+
+Besides `.schem` / `.litematic`, a hand-drawable layer/palette text format is supported (see `blueprints/`):
 
 ```text
-name 작은 오두막
+name Small cottage
 palette W white_concrete
-palette G glass
-layer 0          # y=0 평면. 아래 각 줄이 z 증가, 글자가 x 증가
+palette T oak_stairs[facing=east,half=bottom]   # states go in brackets
+layer 0          # the y=0 plane; each row below is one z, each character one x
 WWW
-W.W              # '.' 또는 공백 = 공기
+W.W              # '.' or a space is air
 WWW
-layer 1
-WGW
 ```
 
-## 동작 원리
+## How it works
 
 ```mermaid
 flowchart LR
-  A[".schem / URL / .txt"] --> B["파서 (nbt.rs · schem.rs · schematic.rs)"]
-  B --> C["건축 순서: 아래층부터"]
-  C --> D{"도달 거리 안?"}
-  D -- 아니오 --> E["받침 지면 칸으로 걸어 이동 (anti-cheat 안전 속도)"]
+  A[".schem / .litematic / URL / .txt"] --> B["parsers (nbt · schem · litematic · schematic)"]
+  B --> C["anchored build order, bottom-up"]
+  C --> P["placement planner: clicks + yaw per block state"]
+  P --> D{"within reach?"}
+  D -- no --> E["walk to a ground cell (anti-cheat-safe speed)"]
   E --> D
-  D -- 예 --> F["아래 블록 윗면 클릭 → 설치 (Use Item On)"]
-  F --> G["keepalive · 텔레포트 확인 응답으로 킥 방지"]
+  D -- yes --> F["Use Item On: click the planned face"]
+  F --> G["answer keepalive / teleports to stay connected"]
+  F --> H["progress file for --resume"]
 ```
 
 ```text
-crates/mc-proto/      VarInt/VarLong, 문자열, Position, UUID, 길이 프레이밍 + zlib (의존성: flate2)
+crates/mc-proto/      VarInt/VarLong, strings, Position, UUID, length framing + zlib (dep: flate2)
 crates/mc-bot/
-  net.rs  proto.rs    TCP · 핸드셰이크/상태핑/오프라인 로그인/Config
-  ids.rs              1.21.1 패킷 ID (minecraft-data 대조)
-  world.rs            좌표 · 시야(yaw/pitch) · 도달 거리
-  nbt.rs schem.rs     NBT 리더 · Sponge .schem 파서
-  schematic.rs        설계도 모델 · 건축 순서 · ASCII 도면 · 공중 블록 검출
-  builder.rs          Play 클라이언트: 이동 · 설치 · keepalive
-  blocks.rs           블록 → 아이템 ID (1333종)
+  net.rs  proto.rs    TCP · handshake / status ping / offline login / Configuration
+  ids.rs              1.21.1 packet ids (checked against minecraft-data)
+  version.rs          version table behind --version (what is verified, what is not)
+  world.rs            coordinates · faces · view angles · reach
+  nbt.rs schem.rs litematic.rs   NBT reader · Sponge .schem and Litematica parsers
+  schematic.rs        blueprint model · block states · anchored build order · ASCII map
+  placement.rs        block state → clicks, cursor and yaw (pure, unit-tested)
+  builder.rs          Play client: movement · placement · keepalive
+  progress.rs         resume file
+  i18n.rs             en/ko message switch
+  blocks.rs           block → item id (1333 types)
   bin/                build-bot, packet-probe
-tools/preview.py      설계도 → 아이소메트릭 PNG
+tools/preview.py      blueprint → isometric PNG
 ```
 
-## 왜 손으로 구현했나
+## Why hand-written?
 
-- 패킷/프로토콜 수준을 직접 이해하고 검증하려고. VarInt(LEB128), Position 패킹(26/12/26), zlib 프레이밍, Configuration 전이, 오프라인 UUID(MD5)를 직접 구현하고 공식 테스트 벡터로 검증했다.
-- 패킷 ID 는 [minecraft-data](https://github.com/PrismarineJS/minecraft-data) 1.21.1 정의와 대조했다.
+- To understand and verify the protocol itself: VarInt (LEB128), Position packing (26/12/26), zlib framing,
+  the Configuration transition and offline UUIDs (MD5) are implemented here and checked against official test vectors.
+- Packet ids are cross-checked against [minecraft-data](https://github.com/PrismarineJS/minecraft-data) 1.21.1.
 
-## 이동과 anti-cheat
+## Movement and anti-cheat
 
-- 항상 `on_ground=true`, 틱당 이동량을 걷기 속도(~0.26블록) 이하로 제한 → "moved too quickly"/"flying is not enabled" 킥 없음.
-- 블록은 "아래 블록의 윗면"을 눌러 설치하므로 받침 없는 공중 설치를 하지 않는다. 받침이 없는 블록은 `--dry-run` 이 미리 경고한다.
-- 서버의 Synchronize Player Position(텔레포트)에는 Confirm Teleport 로 즉시 응답한다.
+- Always `on_ground=true`, and per-tick movement stays below walking speed (~0.26 blocks), so no
+  "moved too quickly" / "flying is not enabled" kicks.
+- Blocks are placed by clicking a face of something that already exists, never in mid-air. Blocks with
+  nothing to rest on are reported by `--dry-run`.
+- Synchronize Player Position (teleport) is answered with Confirm Teleport immediately.
 
-## 검증
+## What is verified
 
-- `cargo test --workspace` — 단위 테스트 (VarInt/Position/zlib/MD5 벡터, 설계도·`.schem` 파싱, ASCII 도면, 공중 블록, 도달 거리 …)
-- 실서버(로컬 1.21.1): 3×3 오두막 25블록 **전부 설치**, 도달실패 0, 킥 없음 (RCON 개수로 확인).
+- `cargo test --workspace` (50+ unit tests, no server needed): VarInt/Position/zlib/MD5 vectors,
+  blueprint and `.schem`/`.litematic` parsing, build ordering, the block-state planner, progress file,
+  version table. CI also runs `clippy -D warnings` and a bilingual `--dry-run` smoke test.
+- Live server (local vanilla 1.21.1, creative, offline): the 3×3×3 cottage built **25/25 blocks with no kick**,
+  confirmed by block counts over RCON.
+- **Not yet verified on a live server:** the block-state clicks (stairs/slabs/logs/doors) and `--resume`.
+  The planner is unit-tested against the vanilla placement rules, but real-server screenshots are still
+  to come. Treat states as experimental and read the `--dry-run` / run summary for what fell back to defaults.
 
-## 기여
+## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) · 변경 내역은 [CHANGELOG.md](CHANGELOG.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) · changes in [CHANGELOG.md](CHANGELOG.md).
+Good first areas: more state families (trapdoors, buttons, 6-way blocks), a packet-id table for
+another version, survival mode with chests.
 
-## 라이선스
+## License
 
-MIT. 패킷 ID 는 PrismarineJS/minecraft-data(1.21.1)와 대조했다.
+MIT. Packet ids were cross-checked with PrismarineJS/minecraft-data (1.21.1).
