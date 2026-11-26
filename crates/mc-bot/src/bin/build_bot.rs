@@ -8,7 +8,7 @@
 use mc_bot::builder::PlayClient;
 use mc_bot::schematic::Schematic;
 use mc_bot::world::{within_reach, BlockPos, Vec3};
-use mc_bot::{blocks, schem};
+use mc_bot::{blocks, litematic, schem};
 use std::collections::HashSet;
 use std::io::Read;
 use std::io;
@@ -104,9 +104,10 @@ fn load_schematic(src: &str) -> Result<Schematic, String> {
         || src.ends_with(".schem") || src.ends_with(".schematic") || src.ends_with(".litematic");
     if is_nbt {
         if src.ends_with(".litematic") {
-            return Err(".litematic 은 아직 미지원입니다. .schem 으로 변환해 주세요.".into());
+            litematic::parse(&bytes, &name)
+        } else {
+            schem::parse(&bytes, &name)
         }
-        schem::parse(&bytes, &name)
     } else {
         let text = String::from_utf8(bytes).map_err(|_| "텍스트 설계도가 UTF-8 이 아닙니다.".to_string())?;
         Schematic::parse(&text)

@@ -3,6 +3,7 @@
 pub mod blocks;
 pub mod builder;
 pub mod ids;
+pub mod litematic;
 pub mod nbt;
 pub mod net;
 pub mod proto;

@@ -21,4 +21,4 @@ python tools/preview.py blueprints/cottage.txt -o /tmp/c.png   # 미리보기 �
 
 ## 아이디어
 
-블록 상태(계단 방향 등), `.litematic` 파서, 버전별 패킷 ID 표, 상자에서 자재 꺼내기(생존 모드).
+블록 상태(계단 방향 등), 버전별 패킷 ID 표, 상자에서 자재 꺼내기(생존 모드).

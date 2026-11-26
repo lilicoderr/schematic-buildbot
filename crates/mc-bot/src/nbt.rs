@@ -45,6 +45,9 @@ impl Nbt {
     pub fn as_byte_array(&self) -> Option<&[u8]> {
         if let Nbt::ByteArray(b) = self { Some(b) } else { None }
     }
+    pub fn as_long_array(&self) -> Option<&[i64]> {
+        if let Nbt::LongArray(l) = self { Some(l) } else { None }
+    }
     pub fn as_list(&self) -> Option<&[Nbt]> {
         if let Nbt::List(l) = self { Some(l) } else { None }
     }

@@ -54,7 +54,7 @@ legend: #=white_concrete A=red_concrete B=glass
 | `--delay-ms` 로 설치 속도 제한 (패킷 레이트 제한 서버용) | ✅ |
 | `tools/preview.py` — 설계도 → 아이소메트릭 PNG (Python 표준 라이브러리만) | ✅ |
 | 블록 상태(계단 방향·반블록 위치 등) | 🚧 현재는 기본 상태로 설치 |
-| `.litematic` | 🚧 `.schem` 으로 변환 필요 |
+| `.litematic` (Litematica, 다중 리전 · 비트 패킹 팔레트) | ✅ |
 | 다른 버전 서버 | 🚧 [ViaProxy](https://github.com/ViaVersion/ViaProxy) 경유 · 패킷 ID 표 분리 예정 |
 | 생존 모드 + 상자에서 자재 꺼내기 | 🚧 필요한 패킷 ID 는 매핑됨 |
 

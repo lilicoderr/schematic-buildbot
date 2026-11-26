@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- `.litematic` 파서(`litematic.rs`): 다중 리전, 비트 패킹 BlockStates, 음수 Size 정규화.
 - `--dry-run` 이 층별 ASCII 도면과 공중(받침 없는) 블록 경고를 출력한다.
 - `--delay-ms <N>` 설치 간 대기 설정 (패킷 레이트 제한이 엄격한 서버용).
 - `tools/preview.py`: 설계도(.txt/.schem) → 아이소메트릭 PNG (표준 라이브러리만). CI 스모크 테스트 포함.
