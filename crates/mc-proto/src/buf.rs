@@ -1,7 +1,7 @@
-//! 패킷 바이트 버퍼 — Minecraft 와이어 타입 읽기/쓰기.
+//! Packet byte buffer: reading and writing Minecraft wire types.
 //!
-//! Minecraft 프로토콜의 정수는 빅엔디언, VarInt/VarLong 은 LEB128(부호는 2의 보수 비트패턴).
-//! Position 은 x(26)·z(26)·y(12) 를 i64 하나에 패킹한다.
+//! Integers in the Minecraft protocol are big-endian; VarInt/VarLong are LEB128 (sign = two's-complement bit pattern).
+//! Position packs x (26), z (26) and y (12) bits into one i64.
 
 use std::fmt;
 
@@ -16,10 +16,10 @@ pub enum ProtoError {
 impl fmt::Display for ProtoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProtoError::Eof => write!(f, "버퍼 끝에 도달 (데이터 부족)"),
-            ProtoError::VarIntTooLong => write!(f, "VarInt 가 너무 김"),
-            ProtoError::BadUtf8 => write!(f, "잘못된 UTF-8 문자열"),
-            ProtoError::BadValue(s) => write!(f, "잘못된 값: {s}"),
+            ProtoError::Eof => write!(f, "reached end of buffer (not enough data)"),
+            ProtoError::VarIntTooLong => write!(f, "VarInt too long"),
+            ProtoError::BadUtf8 => write!(f, "invalid UTF-8 string"),
+            ProtoError::BadValue(s) => write!(f, "invalid value: {s}"),
         }
     }
 }
@@ -27,7 +27,7 @@ impl std::error::Error for ProtoError {}
 
 pub type Result<T> = std::result::Result<T, ProtoError>;
 
-/// 읽기 커서를 가진 바이트 버퍼. 쓰기는 항상 끝에 덧붙인다.
+/// Byte buffer with a read cursor. Writes always append at the end.
 #[derive(Default, Clone)]
 pub struct PacketBuf {
     data: Vec<u8>,
@@ -54,7 +54,7 @@ impl PacketBuf {
         self.pos
     }
 
-    // ── 저수준 ──
+    // ── low level ──
     pub fn write_bytes(&mut self, b: &[u8]) {
         self.data.extend_from_slice(b);
     }
@@ -98,7 +98,7 @@ impl PacketBuf {
         Ok(self.read_u8()? as i8)
     }
 
-    // 빅엔디언 고정폭 정수
+    // big-endian fixed-width integers
     pub fn write_u16(&mut self, v: u16) {
         self.write_bytes(&v.to_be_bytes());
     }
@@ -142,7 +142,7 @@ impl PacketBuf {
         Ok(f64::from_be_bytes(self.read_bytes(8)?.try_into().unwrap()))
     }
 
-    // ── VarInt / VarLong (LEB128, 부호는 2의 보수 비트패턴) ──
+    // ── VarInt / VarLong (LEB128, sign = two's-complement bit pattern) ──
     pub fn write_varint(&mut self, value: i32) {
         let mut v = value as u32;
         loop {
@@ -208,7 +208,7 @@ impl PacketBuf {
         Ok(result as i64)
     }
 
-    // ── 문자열 (VarInt 길이 + UTF-8) ──
+    // ── Strings (VarInt length + UTF-8) ──
     pub fn write_string(&mut self, s: &str) {
         self.write_varint(s.len() as i32);
         self.write_bytes(s.as_bytes());
@@ -219,7 +219,7 @@ impl PacketBuf {
         String::from_utf8(bytes).map_err(|_| ProtoError::BadUtf8)
     }
 
-    // ── UUID (128비트) ──
+    // ── UUID (128 bits) ──
     pub fn write_uuid(&mut self, uuid: u128) {
         self.write_bytes(&uuid.to_be_bytes());
     }
@@ -227,7 +227,7 @@ impl PacketBuf {
         Ok(u128::from_be_bytes(self.read_bytes(16)?.try_into().unwrap()))
     }
 
-    // ── Position: x(26) z(26) y(12) 를 i64 로 패킹 ──
+    // ── Position: x (26) z (26) y (12) packed into an i64 ──
     pub fn write_position(&mut self, x: i32, y: i32, z: i32) {
         let v = (((x as i64) & 0x3FF_FFFF) << 38)
             | (((z as i64) & 0x3FF_FFFF) << 12)
@@ -236,10 +236,10 @@ impl PacketBuf {
     }
     pub fn read_position(&mut self) -> Result<(i32, i32, i32)> {
         let v = self.read_i64()?;
-        // i64 산술 시프트로 26/12/26 비트를 각각 부호 확장
+        // sign-extend the 26/12/26-bit fields with arithmetic shifts
         let x = (v >> 38) as i32;
-        let y = ((v << 52) >> 52) as i32; // 하위 12비트
-        let z = ((v << 26) >> 38) as i32; // 가운데 26비트
+        let y = ((v << 52) >> 52) as i32; // low 12 bits
+        let z = ((v << 26) >> 38) as i32; // middle 26 bits
         Ok((x, y, z))
     }
 }

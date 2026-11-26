@@ -2,7 +2,7 @@ use crate::buf::PacketBuf;
 use crate::frame;
 use std::io::Cursor;
 
-// 프로토콜 위키의 공식 VarInt 테스트 벡터
+// Official VarInt test vectors from the protocol wiki
 #[test]
 fn varint_known_vectors() {
     let cases: &[(i32, &[u8])] = &[
@@ -59,13 +59,13 @@ fn fixed_width_and_string() {
 
 #[test]
 fn position_pack_roundtrip() {
-    // 위키 예시 포함 + 음수 좌표
+    // includes the wiki example + negative coordinates
     let cases = [
         (0i32, 0i32, 0i32),
         (1, 2, 3),
         (-1, -1, -1),
-        (18357644, 831, -20882616), // 위키 예시
-        (-33554432, -2048, 33554431), // 경계값
+        (18357644, 831, -20882616), // wiki example
+        (-33554432, -2048, 33554431), // boundary values
     ];
     for (x, y, z) in cases {
         let mut b = PacketBuf::new();
@@ -90,7 +90,7 @@ fn eof_is_error() {
     assert!(r.read_i32().is_err());
 }
 
-// ── 프레이밍 ──
+// ── Framing ──
 #[test]
 fn frame_uncompressed_roundtrip() {
     let body = b"hello-body";
@@ -103,7 +103,7 @@ fn frame_uncompressed_roundtrip() {
 
 #[test]
 fn frame_compressed_small_below_threshold() {
-    // threshold 보다 작으면 dataLen=0 비압축으로 담김
+    // below the threshold it is sent with dataLen=0 (uncompressed)
     let body = b"tiny";
     let wire = frame::encode(0x01, body, Some(256));
     let mut cur = Cursor::new(wire);
@@ -114,10 +114,10 @@ fn frame_compressed_small_below_threshold() {
 
 #[test]
 fn frame_compressed_large_roundtrip() {
-    // threshold 이상이면 zlib 압축 → 해제 왕복
+    // at or above the threshold it is zlib-compressed → decompress round trip
     let body = vec![0xABu8; 5000];
     let wire = frame::encode(0x33, &body, Some(256));
-    assert!(wire.len() < body.len(), "압축으로 줄어야 함");
+    assert!(wire.len() < body.len(), "compression should shrink it");
     let mut cur = Cursor::new(wire);
     let (id, mut pb) = frame::read_frame(&mut cur, Some(256)).unwrap();
     assert_eq!(id, 0x33);

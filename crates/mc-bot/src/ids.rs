@@ -1,7 +1,7 @@
-//! 1.21.1(프로토콜 767) 패킷 ID 중 이 봇이 쓰는 것들.
+//! The 1.21.1 (protocol 767) packet ids this bot uses.
 //!
-//! sb_* = serverbound(클→서), cb_* = clientbound(서→클).
-//! 상태(state)마다 ID 공간이 따로 있다.
+//! sb_* = serverbound (client → server), cb_* = clientbound (server → client).
+//! Each connection state has its own id space.
 
 // ── Handshaking ──
 pub const SB_HANDSHAKE: i32 = 0x00;
@@ -20,7 +20,7 @@ pub const CB_LOGIN_ENCRYPTION_REQUEST: i32 = 0x01;
 pub const CB_LOGIN_SUCCESS: i32 = 0x02;
 pub const CB_LOGIN_SET_COMPRESSION: i32 = 0x03;
 
-// ── Configuration (클라이언트쪽, 1.21.1) ──
+// ── Configuration (client side, 1.21.1) ──
 pub const SB_CONFIG_CLIENT_INFO: i32 = 0x00;
 pub const SB_CONFIG_FINISH_ACK: i32 = 0x03; // Acknowledge Finish Configuration
 pub const SB_CONFIG_KEEPALIVE: i32 = 0x04;
@@ -41,7 +41,7 @@ pub const SB_PLAY_SET_POS: i32 = 0x1A; // Set Player Position
 pub const SB_PLAY_SET_POS_ROT: i32 = 0x1B; // Set Player Position and Rotation
 pub const SB_PLAY_SET_ROT: i32 = 0x1C;
 pub const SB_PLAY_SWING_ARM: i32 = 0x36; // Swing Arm
-pub const SB_PLAY_USE_ITEM_ON: i32 = 0x38; // Use Item On (블록 설치)
+pub const SB_PLAY_USE_ITEM_ON: i32 = 0x38; // Use Item On (place a block)
 pub const SB_PLAY_HELD_ITEM: i32 = 0x2F; // Set Held Item
 pub const SB_PLAY_CLICK_CONTAINER: i32 = 0x0E;
 pub const SB_PLAY_CLOSE_CONTAINER: i32 = 0x0F;
@@ -49,7 +49,7 @@ pub const SB_PLAY_SET_CREATIVE_SLOT: i32 = 0x32;
 pub const SB_PLAY_BLOCK_DIG: i32 = 0x24;
 pub const SB_PLAY_USE_ITEM: i32 = 0x39;
 
-// ── Play (clientbound) ──  (1.21.1 / protocol 767, minecraft-data 기준)
+// ── Play (clientbound) ──  (1.21.1 / protocol 767, per minecraft-data)
 pub const CB_PLAY_KEEPALIVE: i32 = 0x26;
 pub const CB_PLAY_PING: i32 = 0x35; // transaction ping
 pub const CB_PLAY_LOGIN: i32 = 0x2B; // Login (join game)
@@ -62,7 +62,7 @@ pub const CB_PLAY_CONTAINER_CONTENT: i32 = 0x13; // window_items
 pub const CB_PLAY_CONTAINER_SLOT: i32 = 0x15; // set_slot
 pub const CB_PLAY_UPDATE_HEALTH: i32 = 0x5D;
 
-/// 디버그 출력용: 상태+방향+id → 이름 (아는 것만).
+/// For debug output: state + direction + id → name (known ones only).
 pub fn name(state: mc_proto::State, clientbound: bool, id: i32) -> &'static str {
     use mc_proto::State::*;
     match (state, clientbound, id) {

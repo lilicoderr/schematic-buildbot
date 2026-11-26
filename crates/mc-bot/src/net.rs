@@ -1,4 +1,4 @@
-//! TCP 연결 래퍼 — 프레이밍(압축 포함)을 숨기고 패킷 단위 송수신을 제공.
+//! TCP connection wrapper: hides framing (incl. compression) and exposes packet-level send/receive.
 
 use mc_proto::buf::PacketBuf;
 use mc_proto::frame;
@@ -31,7 +31,7 @@ impl Connection {
         self.reader.get_ref().set_read_timeout(dur)
     }
 
-    /// Set Compression 수신 후 임계값을 설정. None = 비압축.
+    /// Set the compression threshold after Set Compression. None = uncompressed.
     pub fn set_threshold(&mut self, threshold: Option<usize>) {
         self.threshold = threshold;
     }
@@ -39,13 +39,13 @@ impl Connection {
         self.threshold
     }
 
-    /// 패킷 하나 전송 (id + body 바이트).
+    /// Send one packet (id + body bytes).
     pub fn send(&mut self, id: i32, body: &[u8]) -> io::Result<()> {
         frame::write_frame(&mut self.writer, id, body, self.threshold)?;
         self.writer.flush()
     }
 
-    /// 패킷 하나 수신 → (id, body 버퍼).
+    /// Receive one packet → (id, body buffer).
     pub fn recv(&mut self) -> io::Result<(i32, PacketBuf)> {
         frame::read_frame(&mut self.reader, self.threshold)
     }

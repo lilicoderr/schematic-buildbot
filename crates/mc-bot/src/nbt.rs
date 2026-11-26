@@ -1,6 +1,6 @@
-//! 최소 NBT(Named Binary Tag) 리더 — 설계도(.schem/.litematic)를 읽기 위한 것.
+//! Minimal NBT (Named Binary Tag) reader for blueprints (.schem/.litematic).
 //!
-//! gzip/zlib/비압축을 자동 감지한다. 쓰기는 지원하지 않는다(읽기 전용).
+//! Detects gzip/zlib/uncompressed automatically. Read-only: writing is not supported.
 
 use flate2::read::{GzDecoder, ZlibDecoder};
 use std::collections::HashMap;
@@ -53,7 +53,7 @@ impl Nbt {
     }
 }
 
-/// 압축을 자동 감지해 NBT 루트를 읽는다. 반환: (루트 이름, 값).
+/// Detect compression and read the NBT root. Returns (root name, value).
 pub fn read(bytes: &[u8]) -> Result<(String, Nbt), String> {
     let data = decompress(bytes)?;
     let mut cur = Cursor { data: &data, pos: 0 };
@@ -88,7 +88,7 @@ struct Cursor<'a> {
 impl<'a> Cursor<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
         if self.pos + n > self.data.len() {
-            return Err("NBT: 데이터 부족".into());
+            return Err("NBT: unexpected end of data".into());
         }
         let s = &self.data[self.pos..self.pos + n];
         self.pos += n;
@@ -163,7 +163,7 @@ impl<'a> Cursor<'a> {
                 }
                 Nbt::LongArray(v)
             }
-            other => return Err(format!("NBT: 알 수 없는 태그 {other}")),
+            other => return Err(format!("NBT: unknown tag {other}")),
         })
     }
 }

@@ -1,7 +1,7 @@
-//! 1.21.1 아이템 레지스트리 (minecraft-data items.json 전체, 생성됨).
-//! 블록 이름→아이템 ID. 설계도의 블록을 손에 들어 설치할 때 사용.
+//! 1.21.1 item registry (all of minecraft-data items.json, generated).
+//! Block name → item id, used to put a blueprint block in hand before placing it.
 
-/// 아이템/블록 이름(접두어 minecraft: 제거) → 수치 ID. 모르면 None.
+/// Item/block name (without the `minecraft:` prefix) → numeric id, or None if unknown.
 pub fn item_id(name: &str) -> Option<i32> {
     let key = name.strip_prefix("minecraft:").unwrap_or(name);
     Some(match key {
@@ -1342,5 +1342,5 @@ pub fn item_id(name: &str) -> Option<i32> {
     })
 }
 
-/// 등록된 아이템 수.
+/// Number of registered items.
 pub const COUNT: usize = 1333;

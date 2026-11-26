@@ -1,13 +1,14 @@
-//! packet-probe — 1.21.1 서버에 붙어 프로토콜을 "리버스"로 관찰하는 도구.
+//! packet-probe: connects to a 1.21.1 server and observes the protocol (reverse engineering).
 //!
-//!   packet-probe status [host:port]            서버 목록 핑(JSON)
-//!   packet-probe probe  [host:port] [name] [초] 로그인 후 Play 패킷을 수집·분류
+//!   packet-probe status [host:port]               server-list ping (JSON)
+//!   packet-probe probe  [host:port] [name] [secs] log in, then collect and classify Play packets
 //!
-//! probe 모드는 keepalive/텔레포트에 정확히 응답해 "킥당하지 않고" 패킷 흐름을 샘플링한다.
-//! online-mode=false 서버 전용.
+//! probe mode answers keepalives/teleports correctly, so it samples the packet flow without being kicked.
+//! online-mode=false servers only.
 
 use mc_bot::ids;
 use mc_bot::proto;
+use mc_bot::{i18n, tr};
 use mc_proto::buf::PacketBuf;
 use mc_proto::State;
 use std::collections::BTreeMap;
@@ -16,6 +17,7 @@ use std::time::{Duration, Instant};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    i18n::set(i18n::detect(None));
     let mode = args.get(1).map(String::as_str).unwrap_or("status");
     let target = args.get(2).map(String::as_str).unwrap_or("127.0.0.1:25566");
     let (host, port) = split_addr(target);
@@ -28,12 +30,12 @@ fn main() {
             run_probe(target, &host, port, name, secs)
         }
         _ => {
-            eprintln!("사용법: packet-probe <status|probe> [host:port] [name] [초]");
+            eprintln!("{}", tr!("usage: packet-probe <status|probe> [host:port] [name] [seconds]", "사용법: packet-probe <status|probe> [host:port] [name] [초]"));
             std::process::exit(2);
         }
     };
     if let Err(e) = result {
-        eprintln!("[오류] {e}");
+        eprintln!("{}", tr!("[error] {}", "[오류] {}", e));
         std::process::exit(1);
     }
 }
@@ -54,7 +56,7 @@ fn run_status(addr: &str, host: &str, port: u16) -> io::Result<()> {
             println!("  {}", snippet.replace('\n', " "));
         }
     }
-    println!("  raw {} bytes", json.len());
+    println!("{}", tr!("  raw {} bytes", "  원본 {} 바이트", json.len()));
     Ok(())
 }
 
@@ -76,17 +78,28 @@ impl Stats {
 
 fn run_probe(addr: &str, host: &str, port: u16, name: &str, secs: u64) -> io::Result<()> {
     let mut stats = Stats::default();
-    println!("=== 로그인 ({addr} as {name}) ===");
+    println!("{}", tr!("=== login ({} as {}) ===", "=== 로그인 ({} as {}) ===", addr, name));
 
     let (mut conn, join) = proto::login_offline(addr, host, port, name, |state, id, body| {
         let n = mc_bot::ids::name(state, true, id);
         stats.record(&format!("{:?}/{} (0x{:02X})", state, n, id), body.remaining() + 1);
     })?;
     println!(
-        "  로그인 성공: user={} uuid={:032x}, 압축임계값={:?}",
-        join.username, join.uuid, conn.threshold()
+        "{}",
+        tr!(
+            "  login ok: user={} uuid={:032x}, compression threshold={:?}",
+            "  로그인 성공: user={} uuid={:032x}, 압축임계값={:?}",
+            join.username, join.uuid, conn.threshold()
+        )
     );
-    println!("=== Play 패킷 {secs}초 수집 (keepalive/텔레포트 응답하며 유지) ===");
+    println!(
+        "{}",
+        tr!(
+            "=== collecting Play packets for {}s (answering keepalive/teleports) ===",
+            "=== Play 패킷 {}초 수집 (keepalive/텔레포트 응답하며 유지) ===",
+            secs
+        )
+    );
 
     conn.set_read_timeout(Some(Duration::from_millis(500)))?;
     let deadline = Instant::now() + Duration::from_secs(secs);
@@ -124,7 +137,7 @@ fn run_probe(addr: &str, host: &str, port: u16, name: &str, secs: u64) -> io::Re
                         teleports += 1;
                     }
                     ids::CB_PLAY_DISCONNECT => {
-                        println!("  [서버가 연결 종료]");
+                        println!("{}", tr!("  [server closed the connection]", "  [서버가 연결 종료]"));
                         break;
                     }
                     _ => {}
@@ -137,14 +150,25 @@ fn run_probe(addr: &str, host: &str, port: u16, name: &str, secs: u64) -> io::Re
         }
     }
 
-    println!("\n=== 패킷 분석 요약 ===");
-    println!("  위치(spawn): ({:.1}, {:.1}, {:.1})", pos.0, pos.1, pos.2);
-    println!("  keepalive 응답 {kept_alive}회, 텔레포트 확인 {teleports}회 → 킥 없이 유지됨");
+    println!("\n{}", tr!("=== packet analysis summary ===", "=== 패킷 분석 요약 ==="));
+    println!("{}", tr!("  spawn position: ({:.1}, {:.1}, {:.1})", "  위치(spawn): ({:.1}, {:.1}, {:.1})", pos.0, pos.1, pos.2));
     println!(
-        "  수신 패킷 {} 종류, 총 {} 개, {} 바이트\n",
-        stats.counts.len(),
-        stats.total,
-        stats.total_bytes
+        "{}",
+        tr!(
+            "  answered {} keepalives and {} teleports, stayed connected",
+            "  keepalive 응답 {}회, 텔레포트 확인 {}회 → 킥 없이 유지됨",
+            kept_alive, teleports
+        )
+    );
+    println!(
+        "{}\n",
+        tr!(
+            "  received {} packet kinds, {} packets, {} bytes",
+            "  수신 패킷 {} 종류, 총 {} 개, {} 바이트",
+            stats.counts.len(),
+            stats.total,
+            stats.total_bytes
+        )
     );
 
     let mut rows: Vec<_> = stats
