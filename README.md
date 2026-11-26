@@ -1,4 +1,5 @@
 # schematic-buildbot
+![CI](https://github.com/GigongDohyun/schematic-buildbot/actions/workflows/ci.yml/badge.svg)
 
 **Rust** 로 Minecraft **1.21.1** 프로토콜(767)을 직접 구현한 — 라이브러리 없이 — 봇.
 mineflayer/azalea 같은 기성 봇 프레임워크를 쓰지 않고, 핸드셰이크·로그인·설정·플레이 패킷을 손으로 파싱한다.
