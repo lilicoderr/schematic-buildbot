@@ -152,7 +152,7 @@ fn run_probe(addr: &str, host: &str, port: u16, name: &str, secs: u64) -> io::Re
         .iter()
         .map(|(k, c)| (*c, stats.bytes[k], k.clone()))
         .collect();
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
     println!("  {:<42} {:>6} {:>10}", "packet", "count", "bytes");
     for (count, bytes, name) in rows.iter().take(25) {
         println!("  {:<42} {:>6} {:>10}", name, count, bytes);

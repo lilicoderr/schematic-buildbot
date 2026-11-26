@@ -1,20 +1,23 @@
-//! build-bot — 설계도(blueprint)대로 1.21.1 오프라인 서버에 블록을 짓는다.
+//! build-bot — builds a blueprint on an offline-mode Minecraft server.
 //!
-//!   build-bot [host:port] [name] [blueprint.txt]
+//!   build-bot [host:port] [name] [blueprint] [options]
 //!
-//! 지면을 걸어 다니며(공중부양/과속 없이) 받침 있는 칸부터 설치한다.
-//! 크리에이티브 서버에서 동작(블록을 set_creative_slot 으로 손에 들어 설치).
+//! The bot walks on the ground (no flying, no speeding) and places supported blocks
+//! first. Works on creative-mode servers (it puts blocks in hand via set-creative-slot).
 
 use mc_bot::builder::PlayClient;
-use mc_bot::schematic::Schematic;
+use mc_bot::placement::{self, Action};
+use mc_bot::progress::Progress;
+use mc_bot::schematic::{Block, Schematic};
+use mc_bot::version::{self, Version};
 use mc_bot::world::{within_reach, BlockPos, Vec3};
-use mc_bot::{blocks, litematic, schem};
-use std::collections::HashSet;
-use std::io::Read;
-use std::io;
+use mc_bot::{blocks, i18n, litematic, schem, tr};
+use std::collections::{BTreeMap, HashSet};
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const DEFAULT_BLUEPRINT: &str = "name 작은 오두막
+const DEFAULT_BLUEPRINT: &str = "name Small cottage
 palette W white_concrete
 palette G glass
 palette R red_concrete
@@ -32,215 +35,455 @@ RRR
 RRR
 ";
 
-const USAGE: &str = "\
-build-bot — 설계도대로 Minecraft 1.21.1 오프라인 서버에 건축
+fn usage() -> String {
+    tr!(
+        "\
+build-bot — build a blueprint on a Minecraft offline-mode server
+
+USAGE:
+  build-bot [host:port] [name] [blueprint]   build (default 127.0.0.1:25566, BuildBot)
+  build-bot x x <blueprint> --dry-run        validate offline, no server needed
+
+  <blueprint> is a .schem / .litematic / .txt file or an http(s) URL to one.
+
+OPTIONS:
+  --dry-run            print size, block list, layer map and state report, then exit
+  --delay-ms <N>       pause after each placement (default 25)
+  --rate <N>           cap placements per second (overrides --delay-ms)
+  --version <V>        Minecraft version to announce (default 1.21.1)
+  --resume             continue an interrupted build from the progress file
+  --progress-file <F>  progress file path (default .buildbot-progress)
+  --lang <en|ko>       output language (also BUILDBOT_LANG)
+  -h, --help           show this help
+
+EXAMPLE:
+  build-bot 127.0.0.1:25566 MyBot https://example.com/castle.schem",
+        "\
+build-bot — 설계도를 Minecraft 오프라인 서버에 건축
 
 사용법:
-  build-bot [host:port] [이름] [설계도.txt]        건축 실행 (기본 127.0.0.1:25566, BuildBot)
-  build-bot [host:port] [이름] <설계도.txt> --dry-run   서버 없이 설계도만 검증
-  build-bot ... --delay-ms <N>                      설치 간 대기(기본 25ms). 패킷 속도 제한이 엄격한 서버용
-  build-bot --help                                  이 도움말
+  build-bot [host:port] [이름] [설계도]       건축 (기본 127.0.0.1:25566, BuildBot)
+  build-bot x x <설계도> --dry-run            서버 없이 설계도만 검증
+
+  <설계도>는 .schem / .litematic / .txt 파일 또는 그 http(s) URL.
+
+옵션:
+  --dry-run            크기·블록 목록·층별 도면·상태 보고를 출력하고 종료
+  --delay-ms <N>       설치마다 대기(기본 25)
+  --rate <N>           초당 설치 수 상한 (--delay-ms 보다 우선)
+  --version <V>        알릴 마인크래프트 버전 (기본 1.21.1)
+  --resume             중단된 건축을 진행 파일에서 이어서 진행
+  --progress-file <F>  진행 파일 경로 (기본 .buildbot-progress)
+  --lang <en|ko>       출력 언어 (환경변수 BUILDBOT_LANG)
+  -h, --help           도움말
 
 예시:
-  build-bot 127.0.0.1:25566 MyBot blueprints/cottage.txt
-  build-bot x x blueprints/cottage.txt --dry-run
+  build-bot 127.0.0.1:25566 MyBot https://example.com/castle.schem"
+    )
+}
 
-설계도 포맷은 blueprints/ 예시와 README 참고.";
+#[derive(Default)]
+struct Opts {
+    positional: Vec<String>,
+    dry_run: bool,
+    delay_ms: Option<u64>,
+    rate: Option<f64>,
+    version: Option<String>,
+    resume: bool,
+    progress_file: Option<String>,
+    lang: Option<String>,
+    help: bool,
+}
+
+fn parse_opts(args: &[String]) -> Result<Opts, String> {
+    let mut o = Opts::default();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = |flag: &str| {
+            it.next().cloned().ok_or_else(|| tr!("{} needs a value", "{} 에 값이 필요합니다", flag))
+        };
+        match a.as_str() {
+            "-h" | "--help" => o.help = true,
+            "--dry-run" | "--validate" => o.dry_run = true,
+            "--resume" => o.resume = true,
+            "--delay-ms" => {
+                o.delay_ms = Some(value("--delay-ms")?.parse().map_err(|_| tr!("--delay-ms must be a number", "--delay-ms 는 숫자여야 합니다"))?)
+            }
+            "--rate" => {
+                let r: f64 = value("--rate")?.parse().map_err(|_| tr!("--rate must be a number", "--rate 는 숫자여야 합니다"))?;
+                if r <= 0.0 {
+                    return Err(tr!("--rate must be positive", "--rate 는 0보다 커야 합니다"));
+                }
+                o.rate = Some(r);
+            }
+            "--version" => o.version = Some(value("--version")?),
+            "--progress-file" => o.progress_file = Some(value("--progress-file")?),
+            "--lang" => o.lang = Some(value("--lang")?),
+            s if s.starts_with("--") => return Err(tr!("unknown option {}", "알 수 없는 옵션 {}", s)),
+            _ => o.positional.push(a.clone()),
+        }
+    }
+    Ok(o)
+}
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("{USAGE}");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Language first, so even option errors are localized.
+    let lang_flag = args.iter().position(|a| a == "--lang").and_then(|i| args.get(i + 1)).cloned();
+    i18n::set(i18n::detect(lang_flag.as_deref()));
+
+    let opts = parse_opts(&args).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        std::process::exit(2);
+    });
+    if opts.help {
+        println!("{}", usage());
         return;
     }
-    let target = args.get(1).map(String::as_str).unwrap_or("127.0.0.1:25566");
-    let name = args.get(2).map(String::as_str).unwrap_or("BuildBot");
+    let version = version::lookup(opts.version.as_deref().unwrap_or(version::DEFAULT.name))
+        .unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(2);
+        });
+
+    let target = opts.positional.first().map(String::as_str).unwrap_or("127.0.0.1:25566");
+    let name = opts.positional.get(1).map(String::as_str).unwrap_or("BuildBot");
     let (host, port) = match target.rsplit_once(':') {
         Some((h, p)) => (h.to_string(), p.parse().unwrap_or(25565)),
         None => (target.to_string(), 25565),
     };
-    let schem = match args.get(3) {
+    let schem = match opts.positional.get(2) {
         Some(src) => load_schematic(src).unwrap_or_else(|e| {
-            eprintln!("설계도 불러오기 실패({src}): {e}");
+            eprintln!("{}", tr!("failed to load blueprint ({}): {}", "설계도 불러오기 실패({}): {}", src, e));
             std::process::exit(1);
         }),
         None => Schematic::parse(DEFAULT_BLUEPRINT).unwrap(),
     };
 
-    // --dry-run: 서버 접속 없이 설계도만 검증·요약
-    if args.iter().any(|a| a == "--dry-run" || a == "--validate") {
+    if opts.dry_run {
         print_summary(&schem);
         return;
     }
 
-    let delay_ms: u64 = args
-        .iter()
-        .position(|a| a == "--delay-ms")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(25);
-    if let Err(e) = run(target, &host, port, name, &schem, Duration::from_millis(delay_ms)) {
-        eprintln!("[오류] {e}");
+    if let Err(e) = run(target, &host, port, name, &schem, &opts, version) {
+        eprintln!("{}", tr!("[error] {}", "[오류] {}", e));
         std::process::exit(1);
     }
 }
 
-// 설계도 로드: 로컬 파일 또는 http(s) URL. .schem(gzip NBT) 과 텍스트(.txt) 자동 판별.
-// "딸깍 한 번" — 공유 사이트의 .schem 직링크를 그대로 넣으면 받아서 짓는다.
+/// Load a blueprint from a local file or an http(s) URL. Format is picked by extension,
+/// falling back to sniffing: gzip NBT is a schematic, anything else is the text format.
+/// Paste a direct `.schem` link from a sharing site and it downloads and builds.
 fn load_schematic(src: &str) -> Result<Schematic, String> {
-    let name = src.rsplit(['/', '\\']).next().unwrap_or("blueprint").to_string();
+    let path_part = src.split(['?', '#']).next().unwrap_or(src);
+    let name = path_part.rsplit(['/', '\\']).next().unwrap_or("blueprint").to_string();
     let bytes: Vec<u8> = if src.starts_with("http://") || src.starts_with("https://") {
-        eprintln!("다운로드: {src}");
+        eprintln!("{}", tr!("downloading: {}", "다운로드: {}", src));
         let resp = ureq::get(src).call().map_err(|e| format!("HTTP: {e}"))?;
         let mut buf = Vec::new();
-        resp.into_reader().read_to_end(&mut buf).map_err(|e| format!("읽기: {e}"))?;
+        resp.into_reader().read_to_end(&mut buf).map_err(|e| tr!("read: {}", "읽기: {}", e))?;
         buf
     } else {
         std::fs::read(src).map_err(|e| e.to_string())?
     };
 
-    // gzip 매직(1f 8b) 또는 .schem/.litematic 확장자 → NBT 스키매틱
-    let is_nbt = bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b
-        || src.ends_with(".schem") || src.ends_with(".schematic") || src.ends_with(".litematic");
-    if is_nbt {
-        if src.ends_with(".litematic") {
-            litematic::parse(&bytes, &name)
-        } else {
-            schem::parse(&bytes, &name)
+    let ext = path_part.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    let gzip = bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
+    match ext.as_str() {
+        "litematic" => litematic::parse(&bytes, &name),
+        "schem" | "schematic" => schem::parse(&bytes, &name),
+        _ if gzip => schem::parse(&bytes, &name).or_else(|e| litematic::parse(&bytes, &name).map_err(|_| e)),
+        _ => {
+            let text = String::from_utf8(bytes)
+                .map_err(|_| tr!("the text blueprint is not valid UTF-8", "텍스트 설계도가 UTF-8 이 아닙니다."))?;
+            Schematic::parse(&text)
         }
-    } else {
-        let text = String::from_utf8(bytes).map_err(|_| "텍스트 설계도가 UTF-8 이 아닙니다.".to_string())?;
-        Schematic::parse(&text)
     }
 }
 
-// 설계도 검증·요약 (서버 불필요). 알 수 없는 블록도 표시.
+/// Simulate placement offline: which requested states can be honoured?
+fn state_report(schem: &Schematic) -> (usize, BTreeMap<String, usize>, usize) {
+    let (order, _) = schem.plan_order();
+    let (min, _) = schem.bounds();
+    let mut placed: HashSet<BlockPos> = HashSet::new();
+    let (mut honoured, mut skipped) = (0usize, 0usize);
+    let mut lost: BTreeMap<String, usize> = BTreeMap::new();
+    for b in order {
+        let solid = |p: BlockPos| p.y < min.y || placed.contains(&p);
+        match placement::plan(b, solid) {
+            Action::Skip(_) => skipped += 1,
+            Action::Place(plan) => {
+                if !b.props.is_empty() && plan.unhonoured.is_empty() {
+                    honoured += 1;
+                }
+                for k in plan.unhonoured {
+                    *lost.entry(format!("{}:{}", b.name, k)).or_default() += 1;
+                }
+            }
+        }
+        placed.insert(b.pos);
+    }
+    (honoured, lost, skipped)
+}
+
 fn print_summary(schem: &Schematic) {
     let (min, max) = schem.bounds();
-    println!("=== 설계도 검증: '{}' ===", schem.name);
+    println!("{}", tr!("=== blueprint check: '{}' ===", "=== 설계도 검증: '{}' ===", schem.name));
     println!(
-        "크기 {}x{}x{} (x {}..{}, y {}..{}, z {}..{}), 총 {}블록",
-        max.x - min.x + 1, max.y - min.y + 1, max.z - min.z + 1,
-        min.x, max.x, min.y, max.y, min.z, max.z, schem.blocks.len()
+        "{}",
+        tr!(
+            "size {}x{}x{} (x {}..{}, y {}..{}, z {}..{}), {} blocks",
+            "크기 {}x{}x{} (x {}..{}, y {}..{}, z {}..{}), 총 {}블록",
+            max.x - min.x + 1, max.y - min.y + 1, max.z - min.z + 1,
+            min.x, max.x, min.y, max.y, min.z, max.z, schem.blocks.len()
+        )
     );
-    println!("\n{}", schem.ascii_layers());
-    let floating = schem.floating_blocks();
-    if !floating.is_empty() {
-        println!("※ 아래가 비어 있는(공중) 블록 {}개 — 받침이 없어 설치가 거부될 수 있습니다.\n", floating.len());
-    }
     let mut unknown = Vec::new();
-    println!("블록 종류:");
+    println!("{}", tr!("block types:", "블록 종류:"));
     for (name, count) in schem.block_counts() {
         let ok = blocks::item_id(&name).is_some();
-        if !ok { unknown.push(name.clone()); }
-        println!("  {:>5}  {}{}", count, name, if ok { "" } else { "  ← 미등록(설치 불가)" });
+        if !ok {
+            unknown.push(name.clone());
+        }
+        let tag = if ok { String::new() } else { tr!("  <- not registered (cannot place)", "  ← 미등록(설치 불가)") };
+        println!("  {count:>5}  {name}{tag}");
     }
     if unknown.is_empty() {
-        println!("모든 블록이 설치 가능합니다. ✅");
+        println!("{}", tr!("All blocks can be placed.", "모든 블록이 설치 가능합니다."));
     } else {
-        println!("미등록 블록 {}종: {} — blocks.rs 에 없는 이름입니다.", unknown.len(), unknown.join(", "));
+        println!(
+            "{}",
+            tr!("{} unregistered block type(s): {}", "미등록 블록 {}종: {}", unknown.len(), unknown.join(", "))
+        );
+    }
+    print!("\n{}", schem.ascii_layers());
+    print_state_and_anchor_report(schem);
+}
+
+fn print_state_and_anchor_report(schem: &Schematic) {
+    let stateful = schem.stateful_count();
+    if stateful > 0 {
+        let (honoured, lost, skipped) = state_report(schem);
+        println!(
+            "\n{}",
+            tr!(
+                "block states: {} blocks carry states; {} will match exactly, {} second-half blocks are placed automatically",
+                "블록 상태: 상태 보유 {}개, 정확히 재현 {}개, 자동 생성되는 두 번째 칸 {}개",
+                stateful, honoured, skipped
+            )
+        );
+        for (k, n) in lost {
+            println!("  {}", tr!("{} x{}: default state (no click available)", "{} x{}: 기본 상태로 설치(클릭할 면 없음)", k, n));
+        }
+    }
+    let un = schem.unanchored_blocks();
+    if !un.is_empty() {
+        println!(
+            "\n{}",
+            tr!(
+                "warning: {} block(s) have no neighbour to rest against and would float",
+                "경고: 받침이 될 이웃이 전혀 없어 공중에 뜨는 블록 {}개",
+                un.len()
+            )
+        );
     }
 }
 
-fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, delay: Duration) -> io::Result<()> {
-    println!("=== 접속 ({addr} as {name}) ===");
-    let (mut bot, _join) = PlayClient::join(addr, host, port, name)?;
-    bot.place_delay = delay;
+fn place_delay(opts: &Opts) -> Duration {
+    match (opts.rate, opts.delay_ms) {
+        (Some(r), _) => Duration::from_secs_f64(1.0 / r),
+        (None, Some(ms)) => Duration::from_millis(ms),
+        _ => Duration::from_millis(25),
+    }
+}
+
+/// Where to resume: the saved start index and origin when the progress file matches this blueprint.
+fn resume_point(opts: &Opts, path: &Path, fingerprint: u64, total: usize) -> Option<Progress> {
+    if !opts.resume {
+        return None;
+    }
+    match Progress::load(path) {
+        Some(p) if p.fingerprint == fingerprint && p.total == total => Some(p),
+        _ => {
+            println!(
+                "{}",
+                tr!("no matching progress file, starting from the beginning", "맞는 진행 파일이 없어 처음부터 시작합니다")
+            );
+            None
+        }
+    }
+}
+
+fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &Opts, version: Version) -> io::Result<()> {
+    println!(
+        "{}",
+        tr!("=== connecting ({} as {}, Minecraft {}) ===", "=== 접속 ({} as {}, Minecraft {}) ===", addr, name, version.name)
+    );
+    let (mut bot, _join) = PlayClient::join_v(addr, host, port, name, version.protocol)?;
     if let Some(reason) = &bot.kicked {
-        println!("킥됨: {reason}");
+        println!("{}", tr!("kicked: {}", "킥됨: {}", reason));
         return Ok(());
     }
+    bot.place_delay = place_delay(opts);
     let spawn = bot.feet;
-    println!("스폰 위치: ({:.1}, {:.1}, {:.1})", spawn.x, spawn.y, spawn.z);
+    println!("{}", tr!("spawn: ({:.1}, {:.1}, {:.1})", "스폰 위치: ({:.1}, {:.1}, {:.1})", spawn.x, spawn.y, spawn.z));
 
-    // 구조물 원점: 스폰에서 x+2, z+2 (겹침 방지), y 는 지면 높이
-    let origin = BlockPos::new(spawn.x.floor() as i32 + 2, spawn.y.floor() as i32, spawn.z.floor() as i32 + 2);
+    let (order, _) = schem.plan_order();
+    let total = order.len();
+    let progress_path = PathBuf::from(opts.progress_file.as_deref().unwrap_or(".buildbot-progress"));
+    let fingerprint = schem.fingerprint();
+
+    let mut origin = BlockPos::new(spawn.x.floor() as i32 + 2, spawn.y.floor() as i32, spawn.z.floor() as i32 + 2);
+    let mut start = 0usize;
+    if let Some(p) = resume_point(opts, &progress_path, fingerprint, total) {
+        start = p.done.min(total);
+        origin = p.origin;
+        println!("{}", tr!("resuming at block {}/{}", "이어서 진행: {}/{}", start, total));
+    }
     let (min, max) = schem.bounds();
     println!(
-        "설계도 '{}': {}블록, 크기 {}x{}x{}, 원점 ({},{},{})",
-        schem.name,
-        schem.blocks.len(),
-        max.x - min.x + 1,
-        max.y - min.y + 1,
-        max.z - min.z + 1,
-        origin.x, origin.y, origin.z
+        "{}",
+        tr!(
+            "blueprint '{}': {} blocks, size {}x{}x{}, origin ({},{},{})",
+            "설계도 '{}': {}블록, 크기 {}x{}x{}, 원점 ({},{},{})",
+            schem.name, total, max.x - min.x + 1, max.y - min.y + 1, max.z - min.z + 1, origin.x, origin.y, origin.z
+        )
     );
 
-    // 월드 좌표 집합(서 있을 칸 판별용)
-    let occupied: HashSet<(i32, i32, i32)> = schem
-        .blocks
-        .iter()
-        .map(|b| (origin.x + b.pos.x, origin.y + b.pos.y, origin.z + b.pos.z))
-        .collect();
+    let at = |b: &Block| BlockPos::new(origin.x + b.pos.x, origin.y + b.pos.y, origin.z + b.pos.z);
+    let occupied: HashSet<(i32, i32, i32)> = order.iter().map(|b| at(b)).map(|p| (p.x, p.y, p.z)).collect();
+    // Blocks from an earlier run already exist in the world.
+    let mut placed: HashSet<BlockPos> = order.iter().take(start).map(|b| at(b)).collect();
 
-    let mut placed = 0u32;
-    let mut skipped = 0u32;
-    let mut unknown = 0u32;
-    let total = schem.blocks.len();
-    let mut processed = 0usize;
+    let mut stats = Stats::default();
+    let save = |idx: usize| {
+        let _ = Progress { fingerprint, origin, done: idx, total }.save(&progress_path);
+    };
 
-    for b in schem.build_order() {
+    let mut processed = start;
+    for b in order.iter().skip(start) {
         if bot.kicked.is_some() {
             break;
         }
         processed += 1;
-        // 진행률은 stderr 로(버퍼링 없이) — 긴 건축 중 상태 확인용
-        if processed % 10 == 0 || processed == total {
-            eprintln!("  …건축 {processed}/{total} (설치 {placed})");
+        if processed.is_multiple_of(10) || processed == total {
+            eprintln!("{}", tr!("  ...building {}/{} (placed {})", "  …건축 {}/{} (설치 {})", processed, total, stats.done));
+            save(processed - 1);
         }
-        let world = BlockPos::new(origin.x + b.pos.x, origin.y + b.pos.y, origin.z + b.pos.z);
+        let world = at(b);
         let Some(item) = blocks::item_id(&b.name) else {
-            unknown += 1;
+            stats.unknown += 1;
             continue;
         };
-
-        // 도달 못 하면 받침 지면 칸으로 이동
+        let solid = |p: BlockPos| p.y < origin.y || placed.contains(&p);
+        let plan = match placement::plan(&Block { pos: world, ..(*b).clone() }, solid) {
+            Action::Skip(_) => {
+                stats.auto_half += 1;
+                continue;
+            }
+            Action::Place(p) => p,
+        };
         if !within_reach(bot.feet, world) {
             if let Some((sx, sz)) = stand_cell(bot.feet, world, origin.y, &occupied) {
                 bot.walk_to(sx + 0.5, sz + 0.5)?;
             }
         }
-        match bot.place_block(world, item)? {
-            true => placed += 1,
-            false => skipped += 1,
+        if bot.place(world, item, &plan)? {
+            stats.done += 1;
+            placed.insert(world);
+            stats.note_defaults(&b.name, &plan.unhonoured);
+        } else {
+            stats.out_of_reach += 1;
         }
     }
 
     bot.idle(Duration::from_millis(500))?;
-    println!("\n=== 완료 ===");
-    println!("설치 {placed} · 도달실패 {skipped} · 미등록블록 {unknown}");
+    stats.print();
     match &bot.kicked {
-        Some(r) => println!("※ 도중 연결 종료: {r}"),
-        None => println!("킥 없이 연결 유지됨 ✅"),
+        Some(r) => {
+            save(processed.saturating_sub(1));
+            println!(
+                "{}",
+                tr!(
+                    "connection ended early: {} (re-run with --resume to continue)",
+                    "※ 도중 연결 종료: {} (--resume 으로 이어서 진행 가능)",
+                    r
+                )
+            );
+        }
+        None => {
+            Progress::clear(&progress_path);
+            println!("{}", tr!("stayed connected, no kick", "킥 없이 연결 유지됨"));
+        }
     }
     Ok(())
 }
 
-/// 지면(feet_y)에 서서 world 블록을 설치할 수 있는 칸을 찾는다.
-/// 구조물 발밑/머리 칸은 피하고, 현재 위치에 가장 가까운 도달 가능 칸.
-fn stand_cell(
-    cur: Vec3,
-    world: BlockPos,
-    feet_y: i32,
-    occupied: &HashSet<(i32, i32, i32)>,
-) -> Option<(f64, f64)> {
+#[derive(Default)]
+struct Stats {
+    done: u32,
+    out_of_reach: u32,
+    unknown: u32,
+    auto_half: u32,
+    default_state: u32,
+    lost: BTreeMap<String, u32>,
+}
+
+impl Stats {
+    fn note_defaults(&mut self, name: &str, unhonoured: &[String]) {
+        if unhonoured.is_empty() {
+            return;
+        }
+        self.default_state += 1;
+        for k in unhonoured {
+            *self.lost.entry(format!("{name}:{k}")).or_default() += 1;
+        }
+    }
+
+    fn print(&self) {
+        println!("\n{}", tr!("=== done ===", "=== 완료 ==="));
+        println!(
+            "{}",
+            tr!(
+                "placed {} | out of reach {} | unregistered {} | auto second halves {}",
+                "설치 {} · 도달실패 {} · 미등록블록 {} · 자동 생성 {}",
+                self.done, self.out_of_reach, self.unknown, self.auto_half
+            )
+        );
+        if self.default_state > 0 {
+            println!(
+                "{}",
+                tr!(
+                    "{} block(s) placed with the default state instead of the requested one:",
+                    "요청한 상태 대신 기본 상태로 설치된 블록 {}개:",
+                    self.default_state
+                )
+            );
+            for (k, n) in &self.lost {
+                println!("  {k} x{n}");
+            }
+        }
+    }
+}
+
+/// Find a ground cell from which `world` is within reach, preferring the cell closest to `cur`.
+/// Cells inside the structure (feet or head) are avoided.
+fn stand_cell(cur: Vec3, world: BlockPos, feet_y: i32, occupied: &HashSet<(i32, i32, i32)>) -> Option<(f64, f64)> {
     let mut best: Option<(f64, (f64, f64))> = None;
     for r in 1i32..=4 {
         for dx in -r..=r {
             for dz in -r..=r {
                 if dx.abs() != r && dz.abs() != r {
-                    continue; // 링의 테두리만
+                    continue; // ring border only
                 }
-                let cx = world.x + dx;
-                let cz = world.z + dz;
-                // 서 있을 칸의 발/머리가 구조물과 겹치면 제외
+                let (cx, cz) = (world.x + dx, world.z + dz);
                 if occupied.contains(&(cx, feet_y, cz)) || occupied.contains(&(cx, feet_y + 1, cz)) {
                     continue;
                 }
                 let feet = Vec3::new(cx as f64 + 0.5, feet_y as f64, cz as f64 + 0.5);
                 if within_reach(feet, world) {
                     let d = cur.horiz_dist(feet);
-                    if best.map_or(true, |(bd, _)| d < bd) {
+                    if best.is_none_or(|(bd, _)| d < bd) {
                         best = Some((d, (feet.x, feet.z)));
                     }
                 }
@@ -251,4 +494,51 @@ fn stand_cell(
         }
     }
     best.map(|(_, c)| c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_overrides_delay() {
+        let o = Opts { rate: Some(4.0), delay_ms: Some(999), ..Default::default() };
+        assert_eq!(place_delay(&o), Duration::from_millis(250));
+        let o = Opts { delay_ms: Some(40), ..Default::default() };
+        assert_eq!(place_delay(&o), Duration::from_millis(40));
+    }
+
+    #[test]
+    fn parses_flags_and_positionals() {
+        let a: Vec<String> =
+            ["host:1", "Bot", "x.schem", "--rate", "5", "--resume", "--lang", "ko"].map(String::from).to_vec();
+        let o = parse_opts(&a).unwrap();
+        assert_eq!(o.positional, vec!["host:1", "Bot", "x.schem"]);
+        assert_eq!(o.rate, Some(5.0));
+        assert!(o.resume);
+        assert_eq!(o.lang.as_deref(), Some("ko"));
+    }
+
+    #[test]
+    fn rejects_bad_options() {
+        assert!(parse_opts(&["--nope".to_string()]).is_err());
+        assert!(parse_opts(&["--rate".to_string()]).is_err());
+        assert!(parse_opts(&["--rate".to_string(), "0".to_string()]).is_err());
+    }
+
+    #[test]
+    fn stand_cell_avoids_structure() {
+        let occupied: HashSet<(i32, i32, i32)> = [(1, 0, 0)].into_iter().collect();
+        assert!(stand_cell(Vec3::new(0.5, 0.0, 0.5), BlockPos::new(0, 0, 0), 0, &occupied).is_some());
+    }
+
+    #[test]
+    fn stats_collect_unhonoured_states() {
+        let mut s = Stats::default();
+        s.note_defaults("oak_stairs", &["half".to_string()]);
+        s.note_defaults("oak_stairs", &["half".to_string()]);
+        s.note_defaults("stone", &[]);
+        assert_eq!(s.default_state, 2);
+        assert_eq!(s.lost["oak_stairs:half"], 2);
+    }
 }
