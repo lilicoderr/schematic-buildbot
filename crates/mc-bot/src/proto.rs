@@ -1,25 +1,26 @@
-//! 프로토콜 흐름: 핸드셰이크 · 상태 핑 · (오프라인) 로그인/설정 → 플레이.
+//! Protocol flow: handshake, status ping, (offline) login and configuration → play.
 
 use crate::ids;
 use crate::net::Connection;
+use crate::tr;
 use mc_proto::buf::PacketBuf;
 use mc_proto::{State, PROTOCOL_VERSION};
 use std::io;
 
-/// 핸드셰이크 전송. next_state: 1=Status, 2=Login.
-pub fn handshake(conn: &mut Connection, host: &str, port: u16, next_state: i32) -> io::Result<()> {
+/// Send the handshake. `next_state`: 1 = Status, 2 = Login.
+pub fn handshake(conn: &mut Connection, host: &str, port: u16, protocol: i32, next_state: i32) -> io::Result<()> {
     let mut b = PacketBuf::new();
-    b.write_varint(PROTOCOL_VERSION);
+    b.write_varint(protocol);
     b.write_string(host);
     b.write_u16(port);
     b.write_varint(next_state);
     conn.send(ids::SB_HANDSHAKE, b.as_slice())
 }
 
-/// 서버 목록 핑(status). JSON 문자열을 돌려준다.
+/// Server-list ping (status). Returns the JSON string.
 pub fn status_ping(addr: &str, host: &str, port: u16) -> io::Result<String> {
     let mut conn = Connection::connect(addr)?;
-    handshake(&mut conn, host, port, 1)?;
+    handshake(&mut conn, host, port, PROTOCOL_VERSION, 1)?;
     conn.state = State::Status;
     conn.send(ids::SB_STATUS_REQUEST, &[])?;
     loop {
@@ -32,29 +33,41 @@ pub fn status_ping(addr: &str, host: &str, port: u16) -> io::Result<String> {
     }
 }
 
-/// 로그인 결과.
+/// Login result.
 pub struct JoinInfo {
     pub uuid: u128,
     pub username: String,
     pub entity_id: i32,
 }
 
-/// 오프라인 모드 로그인 → Configuration 통과 → Play 진입.
-/// online-mode=false 서버에서만 동작 (암호화/인증 없음).
+/// Offline-mode login → Configuration → Play.
+/// Only works on `online-mode=false` servers (no encryption/authentication).
 ///
-/// `on_packet` 으로 지나가는 모든 수신 패킷을 관찰할 수 있다(패킷 분석용).
+/// `on_packet` observes every packet that passes by (for packet analysis).
 pub fn login_offline(
     addr: &str,
     host: &str,
     port: u16,
     username: &str,
+    on_packet: impl FnMut(State, i32, &PacketBuf),
+) -> io::Result<(Connection, JoinInfo)> {
+    login_offline_v(addr, host, port, username, PROTOCOL_VERSION, on_packet)
+}
+
+/// Like [`login_offline`] but announces an explicit protocol number in the handshake.
+pub fn login_offline_v(
+    addr: &str,
+    host: &str,
+    port: u16,
+    username: &str,
+    protocol: i32,
     mut on_packet: impl FnMut(State, i32, &PacketBuf),
 ) -> io::Result<(Connection, JoinInfo)> {
     let mut conn = Connection::connect(addr)?;
-    handshake(&mut conn, host, port, 2)?;
+    handshake(&mut conn, host, port, protocol, 2)?;
     conn.state = State::Login;
 
-    // Login Start: 이름 + (오프라인용) 임의 UUID
+    // Login Start: name + the offline UUID
     let offline_uuid = offline_player_uuid(username);
     let mut ls = PacketBuf::new();
     ls.write_string(username);
@@ -63,7 +76,7 @@ pub fn login_offline(
 
     let mut join = JoinInfo { uuid: offline_uuid, username: username.to_string(), entity_id: 0 };
 
-    // ── Login 상태 처리 ──
+    // ── Login state ──
     loop {
         let (id, mut body) = conn.recv()?;
         on_packet(State::Login, id, &body);
@@ -75,25 +88,26 @@ pub fn login_offline(
             ids::CB_LOGIN_SUCCESS => {
                 join.uuid = body.read_uuid().unwrap_or(offline_uuid);
                 join.username = body.read_string().unwrap_or_else(|_| username.to_string());
-                // 이후 properties 등은 무시
+                // Properties after this are ignored
                 conn.send(ids::SB_LOGIN_ACK, &[])?; // Login Acknowledged → Configuration
                 conn.state = State::Configuration;
                 break;
             }
             ids::CB_LOGIN_ENCRYPTION_REQUEST => {
-                return Err(io::Error::other(
-                    "서버가 암호화(온라인 모드)를 요구합니다. 테스트는 online-mode=false 서버로 하세요.",
-                ));
+                return Err(io::Error::other(tr!(
+                    "the server requires encryption (online mode); use an online-mode=false server",
+                    "서버가 암호화(온라인 모드)를 요구합니다. 테스트는 online-mode=false 서버로 하세요."
+                )));
             }
             ids::CB_LOGIN_DISCONNECT => {
                 let reason = body.read_string().unwrap_or_default();
-                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, format!("로그인 거부: {reason}")));
+                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, tr!("login refused: {}", "로그인 거부: {}", reason)));
             }
             _ => {}
         }
     }
 
-    // ── Configuration 상태: keepalive/ping 에 응답하고 Finish 를 기다림 ──
+    // ── Configuration state: answer keepalive/ping and wait for Finish ──
     loop {
         let (id, mut body) = conn.recv()?;
         on_packet(State::Configuration, id, &body);
@@ -111,7 +125,7 @@ pub fn login_offline(
                 conn.send(ids::SB_CONFIG_PONG, r.as_slice())?;
             }
             ids::CB_CONFIG_KNOWN_PACKS => {
-                // 서버가 보낸 데이터팩 목록을 그대로 되돌려줌 (빈 목록으로도 대개 통과)
+                // Reply with an empty known-packs list (accepted by vanilla servers)
                 let mut r = PacketBuf::new();
                 r.write_varint(0);
                 conn.send(ids::SB_CONFIG_KNOWN_PACKS, r.as_slice())?;
@@ -123,7 +137,7 @@ pub fn login_offline(
             }
             ids::CB_CONFIG_DISCONNECT => {
                 let reason = body.read_string().unwrap_or_default();
-                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, format!("설정 단계 거부: {reason}")));
+                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, tr!("configuration refused: {}", "설정 단계 거부: {}", reason)));
             }
             _ => {}
         }
@@ -132,8 +146,8 @@ pub fn login_offline(
     Ok((conn, join))
 }
 
-/// 오프라인 플레이어 UUID = MD5("OfflinePlayer:<name>") 를 v3 로 변형.
-/// (바닐라 오프라인 모드와 동일한 규칙)
+/// Offline player UUID = MD5("OfflinePlayer:<name>") turned into a v3 UUID
+/// (the same rule vanilla offline mode uses).
 pub fn offline_player_uuid(username: &str) -> u128 {
     let mut bytes = md5(format!("OfflinePlayer:{username}").as_bytes());
     bytes[6] = (bytes[6] & 0x0f) | 0x30; // version 3
@@ -141,7 +155,7 @@ pub fn offline_player_uuid(username: &str) -> u128 {
     u128::from_be_bytes(bytes)
 }
 
-// 작은 MD5 구현 (오프라인 UUID 전용, 의존성 회피)
+// Small MD5 implementation (offline UUIDs only; avoids a dependency)
 fn md5(input: &[u8]) -> [u8; 16] {
     const S: [u32; 64] = [
         7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
@@ -210,7 +224,7 @@ mod tests {
     use super::*;
     #[test]
     fn md5_known() {
-        // RFC1321 테스트 벡터
+        // RFC 1321 test vectors
         assert_eq!(hex(&md5(b"")), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(hex(&md5(b"abc")), "900150983cd24fb0d6963f7d28e17f72");
         assert_eq!(hex(&md5(b"The quick brown fox jumps over the lazy dog")), "9e107d9d372bb6826bd81d3542a419d6");

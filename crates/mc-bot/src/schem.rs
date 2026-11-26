@@ -1,10 +1,11 @@
-//! Sponge `.schem`(v2/v3) 설계도 파서 → [`Schematic`].
+//! Sponge `.schem` (v2/v3) parser → [`Schematic`].
 //!
-//! 공유 사이트에서 받은 WorldEdit/Sponge 스키매틱을 그대로 건축할 수 있게 한다.
-//! 블록 상태(방향 등)는 무시하고 블록 이름만 사용한다(설치는 기본 상태로).
+//! Lets the bot build WorldEdit/Sponge schematics downloaded from sharing sites.
+//! Block-state properties (facing, half, axis, ...) are kept on each block.
 
 use crate::nbt::{self, Nbt};
 use crate::schematic::{Block, Schematic};
+use crate::tr;
 use crate::world::BlockPos;
 use std::collections::HashMap;
 
@@ -12,13 +13,13 @@ fn is_air(name: &str) -> bool {
     matches!(name, "air" | "cave_air" | "void_air")
 }
 
-// "minecraft:oak_stairs[facing=east]" → "oak_stairs"
+// "minecraft:oak_stairs[facing=east]" → "oak_stairs" (properties are parsed separately)
+#[cfg(test)]
 fn clean_state(state: &str) -> String {
-    let no_props = state.split('[').next().unwrap_or(state);
-    no_props.strip_prefix("minecraft:").unwrap_or(no_props).to_string()
+    crate::schematic::split_state(state).0
 }
 
-// 바이트 슬라이스에서 LEB128 varint 하나 읽기 → (값, 소비한 바이트 수)
+// Read one LEB128 varint from a byte slice → (value, bytes consumed)
 fn read_varint(data: &[u8], start: usize) -> Option<(i32, usize)> {
     let mut result: u32 = 0;
     let mut shift = 0;
@@ -40,12 +41,12 @@ fn read_varint(data: &[u8], start: usize) -> Option<(i32, usize)> {
 
 pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
     let (_root_name, root) = nbt::read(bytes)?;
-    // 일부 파일은 { "Schematic": {...} } 로 한 번 감싼다.
+    // Some files wrap everything in { "Schematic": {...} }.
     let schem = root.get("Schematic").unwrap_or(&root);
 
-    let width = schem.get("Width").and_then(Nbt::as_i32).ok_or("Width 없음")?;
-    let height = schem.get("Height").and_then(Nbt::as_i32).ok_or("Height 없음")?;
-    let length = schem.get("Length").and_then(Nbt::as_i32).ok_or("Length 없음")?;
+    let width = schem.get("Width").and_then(Nbt::as_i32).ok_or(tr!("Width missing", "Width 없음"))?;
+    let height = schem.get("Height").and_then(Nbt::as_i32).ok_or(tr!("Height missing", "Height 없음"))?;
+    let length = schem.get("Length").and_then(Nbt::as_i32).ok_or(tr!("Length missing", "Length 없음"))?;
 
     // v2: 최상위 Palette+BlockData / v3: Blocks { Palette, Data }
     let (palette_tag, data_bytes) = if let Some(blocks) = schem.get("Blocks") {
@@ -53,38 +54,42 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
     } else {
         (schem.get("Palette"), schem.get("BlockData").and_then(Nbt::as_byte_array))
     };
-    let palette_map = palette_tag.and_then(Nbt::as_compound).ok_or("Palette 없음")?;
-    let data = data_bytes.ok_or("BlockData/Data 없음")?;
+    let palette_map = palette_tag.and_then(Nbt::as_compound).ok_or(tr!("Palette missing", "Palette 없음"))?;
+    let data = data_bytes.ok_or(tr!("BlockData/Data missing", "BlockData/Data 없음"))?;
 
-    // 인덱스 → 블록 이름
-    let mut index_to_name: HashMap<i32, String> = HashMap::new();
+    // palette index → block-state string
+    let mut index_to_state: HashMap<i32, String> = HashMap::new();
     for (state, idx) in palette_map {
         if let Some(i) = idx.as_i32() {
-            index_to_name.insert(i, clean_state(state));
+            index_to_state.insert(i, state.clone());
         }
     }
 
-    // BlockData: varint 배열, 순서 = y, z, x
+    // BlockData: varint array, order = y, z, x
     let mut blocks = Vec::new();
     let mut pos = 0usize;
     let mut i = 0i64;
     let total = (width as i64) * (height as i64) * (length as i64);
     while pos < data.len() && i < total {
-        let (idx, used) = read_varint(data, pos).ok_or("BlockData varint 파싱 오류")?;
+        let (idx, used) = read_varint(data, pos).ok_or(tr!("BlockData varint parse error", "BlockData varint 파싱 오류"))?;
         pos += used;
         let x = (i % width as i64) as i32;
         let z = ((i / width as i64) % length as i64) as i32;
         let y = (i / (width as i64 * length as i64)) as i32;
         i += 1;
-        if let Some(bn) = index_to_name.get(&idx) {
-            if !is_air(bn) {
-                blocks.push(Block { pos: BlockPos::new(x, y, z), name: bn.clone() });
+        if let Some(state) = index_to_state.get(&idx) {
+            let block = Block::from_state(BlockPos::new(x, y, z), state);
+            if !is_air(&block.name) {
+                blocks.push(block);
             }
         }
     }
 
     if blocks.is_empty() {
-        return Err("블록이 하나도 없습니다(전부 공기이거나 파싱 실패).".into());
+        return Err(tr!(
+            "no blocks found (everything is air, or parsing failed)",
+            "블록이 하나도 없습니다(전부 공기이거나 파싱 실패)."
+        ));
     }
     Ok(Schematic { name: name.to_string(), blocks })
 }
@@ -109,7 +114,7 @@ mod tests {
 
     #[test]
     fn parse_sample_schem() {
-        // 실제 Sponge v2 포맷 샘플(gzip NBT): 2x2x2, stone 7 + glass 1
+        // Real Sponge v2 sample (gzip NBT): 2x2x2, 7 stone + 1 glass
         let bytes = include_bytes!("../tests/fixtures/sample.schem");
         let s = parse(bytes, "sample").unwrap();
         assert_eq!(s.blocks.len(), 8);

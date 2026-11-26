@@ -1,11 +1,13 @@
 //! Litematica `.litematic` parser → [`Schematic`].
 //!
 //! Each region stores a block-state palette and a bit-packed long array
-//! (entries may straddle two longs). Block properties are ignored, like in `schem.rs`.
+//! (entries may straddle two longs). Palette `Properties` are kept as block-state props.
 
 use crate::nbt::{self, Nbt};
 use crate::schematic::{Block, Schematic};
+use crate::tr;
 use crate::world::BlockPos;
+use std::collections::BTreeMap;
 
 fn is_air(name: &str) -> bool {
     matches!(name, "air" | "cave_air" | "void_air")
@@ -30,26 +32,40 @@ fn packed_value(longs: &[i64], idx: u64, bits: u32) -> Option<u64> {
 
 pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
     let (_n, root) = nbt::read(bytes)?;
-    let regions = root.get("Regions").and_then(Nbt::as_compound).ok_or("Regions 없음")?;
+    let regions = root.get("Regions").and_then(Nbt::as_compound).ok_or(tr!("Regions missing", "Regions 없음"))?;
 
-    let mut raw: Vec<(i32, i32, i32, String)> = Vec::new();
+    type Raw = (i32, i32, i32, String, BTreeMap<String, String>);
+    let mut raw: Vec<Raw> = Vec::new();
     for region in regions.values() {
-        let (px, py, pz) = xyz(region.get("Position")).ok_or("Position 없음")?;
-        let (sx, sy, sz) = xyz(region.get("Size")).ok_or("Size 없음")?;
-        let palette: Vec<String> = region
+        let (px, py, pz) = xyz(region.get("Position")).ok_or(tr!("Position missing", "Position 없음"))?;
+        let (sx, sy, sz) = xyz(region.get("Size")).ok_or(tr!("Size missing", "Size 없음"))?;
+        let palette: Vec<(String, BTreeMap<String, String>)> = region
             .get("BlockStatePalette")
             .and_then(Nbt::as_list)
-            .ok_or("BlockStatePalette 없음")?
+            .ok_or(tr!("BlockStatePalette missing", "BlockStatePalette 없음"))?
             .iter()
             .map(|e| {
                 let n = e.get("Name").and_then(Nbt::as_str).unwrap_or("air");
-                n.strip_prefix("minecraft:").unwrap_or(n).to_string()
+                let name = n.strip_prefix("minecraft:").unwrap_or(n).to_string();
+                let props = e
+                    .get("Properties")
+                    .and_then(Nbt::as_compound)
+                    .map(|m| {
+                        m.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (name, props)
             })
             .collect();
-        let longs = region.get("BlockStates").and_then(Nbt::as_long_array).ok_or("BlockStates 없음")?;
+        let longs = region
+            .get("BlockStates")
+            .and_then(Nbt::as_long_array)
+            .ok_or(tr!("BlockStates missing", "BlockStates 없음"))?;
         let bits = (usize::BITS - palette.len().saturating_sub(1).leading_zeros()).max(2);
         let (w, h, l) = (sx.abs(), sy.abs(), sz.abs());
-        // 음수 크기는 Position 에서 반대 방향으로 뻗는다.
+        // A negative size extends in the opposite direction from Position.
         let (ox, oy, oz) = (
             px + if sx < 0 { sx + 1 } else { 0 },
             py + if sy < 0 { sy + 1 } else { 0 },
@@ -59,10 +75,10 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
             for z in 0..l {
                 for x in 0..w {
                     let idx = ((y as u64) * (l as u64) + z as u64) * (w as u64) + x as u64;
-                    let v = packed_value(longs, idx, bits).ok_or("BlockStates 길이 부족")? as usize;
-                    if let Some(bn) = palette.get(v) {
+                    let v = packed_value(longs, idx, bits).ok_or(tr!("BlockStates too short", "BlockStates 길이 부족"))? as usize;
+                    if let Some((bn, props)) = palette.get(v) {
                         if !is_air(bn) {
-                            raw.push((ox + x, oy + y, oz + z, bn.clone()));
+                            raw.push((ox + x, oy + y, oz + z, bn.clone(), props.clone()));
                         }
                     }
                 }
@@ -70,14 +86,17 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
         }
     }
     if raw.is_empty() {
-        return Err("블록이 하나도 없습니다(전부 공기이거나 파싱 실패).".into());
+        return Err(tr!(
+            "no blocks found (everything is air, or parsing failed)",
+            "블록이 하나도 없습니다(전부 공기이거나 파싱 실패)."
+        ));
     }
     let minx = raw.iter().map(|b| b.0).min().unwrap();
     let miny = raw.iter().map(|b| b.1).min().unwrap();
     let minz = raw.iter().map(|b| b.2).min().unwrap();
     let blocks = raw
         .into_iter()
-        .map(|(x, y, z, n)| Block { pos: BlockPos::new(x - minx, y - miny, z - minz), name: n })
+        .map(|(x, y, z, name, props)| Block { pos: BlockPos::new(x - minx, y - miny, z - minz), name, props })
         .collect();
     Ok(Schematic { name: name.to_string(), blocks })
 }
@@ -115,6 +134,13 @@ mod tests {
             tag_name(&mut o, 8, "Name");
             o.extend((n.len() as u16).to_be_bytes());
             o.extend(n.as_bytes());
+            if n == "minecraft:glass" {
+                tag_name(&mut o, 10, "Properties");
+                tag_name(&mut o, 8, "facing");
+                o.extend(4u16.to_be_bytes());
+                o.extend(b"east");
+                o.push(0);
+            }
             o.push(0);
         }
         tag_name(&mut o, 12, "BlockStates");
@@ -140,6 +166,15 @@ mod tests {
         assert_eq!(counts[0], ("stone".to_string(), 2));
         assert_eq!(counts[1], ("glass".to_string(), 1));
         assert!(s.blocks.iter().any(|b| b.pos == BlockPos::new(1, 0, 0) && b.name == "glass"));
+    }
+
+    #[test]
+    fn palette_properties_become_block_props() {
+        let s = parse(&sample((2, 1, 2)), "t").unwrap();
+        let glass = s.blocks.iter().find(|b| b.name == "glass").unwrap();
+        assert_eq!(glass.prop("facing"), Some("east"));
+        let stone = s.blocks.iter().find(|b| b.name == "stone").unwrap();
+        assert!(stone.props.is_empty());
     }
 
     #[test]

@@ -1,12 +1,16 @@
-//! mc-bot — 1.21.1 오프라인 서버에 붙는 패킷 분석기 + 건축 봇.
+//! mc-bot — a packet analyzer and schematic build bot for offline-mode Minecraft servers.
 
 pub mod blocks;
 pub mod builder;
+pub mod i18n;
 pub mod ids;
 pub mod litematic;
 pub mod nbt;
 pub mod net;
+pub mod placement;
+pub mod progress;
 pub mod proto;
 pub mod schem;
 pub mod schematic;
+pub mod version;
 pub mod world;

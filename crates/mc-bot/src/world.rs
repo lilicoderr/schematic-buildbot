@@ -1,4 +1,4 @@
-//! 좌표·방향·시야(yaw/pitch)·도달거리 계산.
+//! Coordinates, directions, view angles (yaw/pitch) and reach checks.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vec3 {
@@ -28,17 +28,22 @@ impl BlockPos {
     pub fn new(x: i32, y: i32, z: i32) -> Self {
         Self { x, y, z }
     }
-    /// 블록 중심 좌표.
+    /// Centre of the block.
     pub fn center(&self) -> Vec3 {
         Vec3::new(self.x as f64 + 0.5, self.y as f64 + 0.5, self.z as f64 + 0.5)
     }
     pub fn below(&self) -> BlockPos {
         BlockPos::new(self.x, self.y - 1, self.z)
     }
+    /// The neighbouring position across `face`.
+    pub fn offset(&self, face: Face) -> BlockPos {
+        let (dx, dy, dz) = face.offset();
+        BlockPos::new(self.x + dx, self.y + dy, self.z + dz)
+    }
 }
 
-/// 블록 면(클릭 방향). 값은 프로토콜 direction 과 동일.
-#[derive(Debug, Clone, Copy)]
+/// Block face (click direction). Values match the protocol's direction enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Face {
     Down = 0,
     Up = 1,
@@ -48,7 +53,57 @@ pub enum Face {
     East = 5,
 }
 
-/// 눈높이(발 + 1.62)에서 목표 블록 중심을 바라보는 (yaw, pitch) 도.
+impl Face {
+    pub const HORIZONTAL: [Face; 4] = [Face::North, Face::East, Face::South, Face::West];
+
+    /// Unit step of this face (north = -z, east = +x).
+    pub fn offset(self) -> (i32, i32, i32) {
+        match self {
+            Face::Down => (0, -1, 0),
+            Face::Up => (0, 1, 0),
+            Face::North => (0, 0, -1),
+            Face::South => (0, 0, 1),
+            Face::West => (-1, 0, 0),
+            Face::East => (1, 0, 0),
+        }
+    }
+
+    pub fn opposite(self) -> Face {
+        match self {
+            Face::Down => Face::Up,
+            Face::Up => Face::Down,
+            Face::North => Face::South,
+            Face::South => Face::North,
+            Face::West => Face::East,
+            Face::East => Face::West,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Face> {
+        Some(match name {
+            "down" => Face::Down,
+            "up" => Face::Up,
+            "north" => Face::North,
+            "south" => Face::South,
+            "west" => Face::West,
+            "east" => Face::East,
+            _ => return None,
+        })
+    }
+
+    /// Yaw (degrees) of a player looking along a horizontal face; `None` for up/down.
+    pub fn yaw(self) -> Option<f32> {
+        match self {
+            Face::South => Some(0.0),
+            Face::West => Some(90.0),
+            Face::North => Some(180.0),
+            Face::East => Some(-90.0),
+            _ => None,
+        }
+    }
+}
+
+/// (yaw, pitch) in degrees for looking from eye height (feet + 1.62) at a target point.
 pub fn look_at(eye: Vec3, target: Vec3) -> (f32, f32) {
     let dx = target.x - eye.x;
     let dy = target.y - eye.y;
@@ -60,9 +115,9 @@ pub fn look_at(eye: Vec3, target: Vec3) -> (f32, f32) {
 }
 
 pub const EYE_HEIGHT: f64 = 1.62;
-pub const REACH: f64 = 4.5; // 서버 설치 도달 한계(여유 둠)
+pub const REACH: f64 = 4.5; // server placement reach limit (with margin)
 
-/// 발 위치 feet 에서 블록을 설치할 때 눈~블록중심 거리가 도달 범위인지.
+/// Whether the eye-to-block-centre distance from `feet` is within placement reach.
 pub fn within_reach(feet: Vec3, block: BlockPos) -> bool {
     let eye = Vec3::new(feet.x, feet.y + EYE_HEIGHT, feet.z);
     eye.dist(block.center()) <= REACH
@@ -75,12 +130,12 @@ mod tests {
     #[test]
     fn look_at_cardinals() {
         let eye = Vec3::new(0.0, 0.0, 0.0);
-        // +Z 를 보면 yaw 0, -Z 는 180, +X 는 -90, -X 는 90 (마크 기준)
+        // Looking +Z gives yaw 0, -Z 180, +X -90, -X 90 (Minecraft convention)
         let (yaw, _) = look_at(eye, Vec3::new(0.0, 0.0, 1.0));
         assert!((yaw - 0.0).abs() < 0.01);
         let (yaw, _) = look_at(eye, Vec3::new(1.0, 0.0, 0.0));
         assert!((yaw + 90.0).abs() < 0.01);
-        // 바로 위를 보면 pitch -90
+        // Looking straight up gives pitch -90
         let (_, pitch) = look_at(eye, Vec3::new(0.0, 1.0, 0.0));
         assert!((pitch + 90.0).abs() < 0.01);
     }
@@ -88,9 +143,9 @@ mod tests {
     #[test]
     fn reach_check() {
         let feet = Vec3::new(0.5, -60.0, 0.5);
-        // 바로 옆 블록은 도달
+        // The adjacent block is reachable
         assert!(within_reach(feet, BlockPos::new(1, -60, 0)));
-        // 10칸 떨어진 블록은 도달 불가
+        // A block 10 cells away is not
         assert!(!within_reach(feet, BlockPos::new(10, -60, 0)));
     }
 
