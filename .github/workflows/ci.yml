@@ -10,3 +10,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build & test
         run: cargo test --workspace
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Preview tool smoke test
+        run: |
+          python tools/preview.py blueprints/cottage.txt -o /tmp/cottage.png
+          python tools/preview.py crates/mc-bot/tests/fixtures/sample.schem -o /tmp/sample.png
