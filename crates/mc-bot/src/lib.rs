@@ -3,7 +3,9 @@
 pub mod blocks;
 pub mod builder;
 pub mod ids;
+pub mod nbt;
 pub mod net;
 pub mod proto;
+pub mod schem;
 pub mod schematic;
 pub mod world;

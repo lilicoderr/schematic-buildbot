@@ -5,11 +5,12 @@
 //! 지면을 걸어 다니며(공중부양/과속 없이) 받침 있는 칸부터 설치한다.
 //! 크리에이티브 서버에서 동작(블록을 set_creative_slot 으로 손에 들어 설치).
 
-use mc_bot::blocks;
 use mc_bot::builder::PlayClient;
 use mc_bot::schematic::Schematic;
 use mc_bot::world::{within_reach, BlockPos, Vec3};
+use mc_bot::{blocks, schem};
 use std::collections::HashSet;
+use std::io::Read;
 use std::io;
 use std::time::Duration;
 
@@ -57,17 +58,13 @@ fn main() {
         Some((h, p)) => (h.to_string(), p.parse().unwrap_or(25565)),
         None => (target.to_string(), 25565),
     };
-    let src = match args.get(3) {
-        Some(path) => std::fs::read_to_string(path).unwrap_or_else(|e| {
-            eprintln!("설계도 읽기 실패({path}): {e}");
+    let schem = match args.get(3) {
+        Some(src) => load_schematic(src).unwrap_or_else(|e| {
+            eprintln!("설계도 불러오기 실패({src}): {e}");
             std::process::exit(1);
         }),
-        None => DEFAULT_BLUEPRINT.to_string(),
+        None => Schematic::parse(DEFAULT_BLUEPRINT).unwrap(),
     };
-    let schem = Schematic::parse(&src).unwrap_or_else(|e| {
-        eprintln!("설계도 파싱 실패: {e}");
-        std::process::exit(1);
-    });
 
     // --dry-run: 서버 접속 없이 설계도만 검증·요약
     if args.iter().any(|a| a == "--dry-run" || a == "--validate") {
@@ -78,6 +75,34 @@ fn main() {
     if let Err(e) = run(target, &host, port, name, &schem) {
         eprintln!("[오류] {e}");
         std::process::exit(1);
+    }
+}
+
+// 설계도 로드: 로컬 파일 또는 http(s) URL. .schem(gzip NBT) 과 텍스트(.txt) 자동 판별.
+// "딸깍 한 번" — 공유 사이트의 .schem 직링크를 그대로 넣으면 받아서 짓는다.
+fn load_schematic(src: &str) -> Result<Schematic, String> {
+    let name = src.rsplit(['/', '\\']).next().unwrap_or("blueprint").to_string();
+    let bytes: Vec<u8> = if src.starts_with("http://") || src.starts_with("https://") {
+        eprintln!("다운로드: {src}");
+        let resp = ureq::get(src).call().map_err(|e| format!("HTTP: {e}"))?;
+        let mut buf = Vec::new();
+        resp.into_reader().read_to_end(&mut buf).map_err(|e| format!("읽기: {e}"))?;
+        buf
+    } else {
+        std::fs::read(src).map_err(|e| e.to_string())?
+    };
+
+    // gzip 매직(1f 8b) 또는 .schem/.litematic 확장자 → NBT 스키매틱
+    let is_nbt = bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b
+        || src.ends_with(".schem") || src.ends_with(".schematic") || src.ends_with(".litematic");
+    if is_nbt {
+        if src.ends_with(".litematic") {
+            return Err(".litematic 은 아직 미지원입니다. .schem 으로 변환해 주세요.".into());
+        }
+        schem::parse(&bytes, &name)
+    } else {
+        let text = String::from_utf8(bytes).map_err(|_| "텍스트 설계도가 UTF-8 이 아닙니다.".to_string())?;
+        Schematic::parse(&text)
     }
 }
 
