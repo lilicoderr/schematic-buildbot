@@ -1,0 +1,9 @@
+[package]
+name = "mc-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minecraft 1.21.1 protocol primitives (hand-written, offline-mode)"
+
+[dependencies]
+flate2 = "1.0"

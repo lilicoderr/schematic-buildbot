@@ -1,0 +1,17 @@
+[package]
+name = "mc-bot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minecraft 1.21.1 건축 봇 + 패킷 분석기 (offline-mode)"
+
+[dependencies]
+mc-proto = { path = "../mc-proto" }
+
+[[bin]]
+name = "packet-probe"
+path = "src/bin/packet_probe.rs"
+
+[[bin]]
+name = "build-bot"
+path = "src/bin/build_bot.rs"

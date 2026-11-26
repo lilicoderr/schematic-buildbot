@@ -1,0 +1,6 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+# 로컬 테스트 서버·다운로드물
+/testserver
+*.jar
