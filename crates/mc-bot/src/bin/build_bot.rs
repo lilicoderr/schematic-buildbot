@@ -31,8 +31,26 @@ RRR
 RRR
 ";
 
+const USAGE: &str = "\
+build-bot — 설계도대로 Minecraft 1.21.1 오프라인 서버에 건축
+
+사용법:
+  build-bot [host:port] [이름] [설계도.txt]        건축 실행 (기본 127.0.0.1:25566, BuildBot)
+  build-bot [host:port] [이름] <설계도.txt> --dry-run   서버 없이 설계도만 검증
+  build-bot --help                                  이 도움말
+
+예시:
+  build-bot 127.0.0.1:25566 MyBot blueprints/cottage.txt
+  build-bot x x blueprints/cottage.txt --dry-run
+
+설계도 포맷은 blueprints/ 예시와 README 참고.";
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
+        return;
+    }
     let target = args.get(1).map(String::as_str).unwrap_or("127.0.0.1:25566");
     let name = args.get(2).map(String::as_str).unwrap_or("BuildBot");
     let (host, port) = match target.rsplit_once(':') {
@@ -119,10 +137,17 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic) -> io::
     let mut placed = 0u32;
     let mut skipped = 0u32;
     let mut unknown = 0u32;
+    let total = schem.blocks.len();
+    let mut processed = 0usize;
 
     for b in schem.build_order() {
         if bot.kicked.is_some() {
             break;
+        }
+        processed += 1;
+        // 진행률은 stderr 로(버퍼링 없이) — 긴 건축 중 상태 확인용
+        if processed % 10 == 0 || processed == total {
+            eprintln!("  …건축 {processed}/{total} (설치 {placed})");
         }
         let world = BlockPos::new(origin.x + b.pos.x, origin.y + b.pos.y, origin.z + b.pos.z);
         let Some(item) = blocks::item_id(&b.name) else {
