@@ -127,6 +127,14 @@ pub fn plan(block: &Block, solid: impl Fn(BlockPos) -> bool) -> Action {
     if is_slab(&block.name) && block.prop("type").is_some() {
         honoured.push("type");
     }
+    // The lower door half / bed foot is what a normal placement creates.
+    let lower_half = block.prop("half") == Some("lower");
+    if lower_half && (block.name.ends_with("_door") || is_tall_plant(&block.name)) {
+        honoured.push("half");
+    }
+    if block.name.ends_with("_bed") && block.prop("part") == Some("foot") {
+        honoured.push("part");
+    }
 
     // Axis: click a face perpendicular to the wanted axis.
     let axis = block.prop("axis").filter(|_| !block.name.contains("portal"));
@@ -376,6 +384,16 @@ mod tests {
         let p = unwrap_plan(plan(&block("oak_trapdoor[facing=north,half=bottom]"), world(&[(0, 0, 0)])));
         assert!(p.yaw.is_none());
         assert!(!p.unhonoured.is_empty());
+    }
+
+    #[test]
+    fn lower_door_and_bed_foot_are_fully_honoured() {
+        let p = unwrap_plan(plan(&block("oak_door[facing=north,half=lower]"), world(&[(0, 0, 0)])));
+        assert_eq!(p.yaw, Some(180.0));
+        assert!(p.unhonoured.is_empty(), "{:?}", p.unhonoured);
+        let p = unwrap_plan(plan(&block("red_bed[part=foot,facing=east]"), world(&[(0, 0, 0)])));
+        assert_eq!(p.yaw, Some(-90.0));
+        assert!(p.unhonoured.is_empty(), "{:?}", p.unhonoured);
     }
 
     #[test]

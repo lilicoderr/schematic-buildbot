@@ -7,6 +7,7 @@ pub mod ids;
 pub mod litematic;
 pub mod nbt;
 pub mod net;
+pub mod path;
 pub mod placement;
 pub mod progress;
 pub mod proto;

@@ -154,8 +154,21 @@ impl PlayClient {
         const STEP: f64 = 0.26; // max movement per tick (walking is ~0.21)
         let target = Vec3::new(tx, self.feet.y, tz);
         let mut guard = 0;
+        let mut best = f64::MAX;
+        let mut stalled = 0;
         while self.feet.horiz_dist(target) > 0.05 && guard < 2000 {
             guard += 1;
+            // Give up quickly when the server keeps pushing us back (blocked by a wall).
+            let d_now = self.feet.horiz_dist(target);
+            if d_now < best - 0.01 {
+                best = d_now;
+                stalled = 0;
+            } else {
+                stalled += 1;
+                if stalled > 25 {
+                    break;
+                }
+            }
             let dx = target.x - self.feet.x;
             let dz = target.z - self.feet.z;
             let d = (dx * dx + dz * dz).sqrt();
@@ -168,6 +181,17 @@ impl PlayClient {
                 break;
             }
             sleep(Duration::from_millis(40));
+        }
+        Ok(())
+    }
+
+    /// Walk along a precomputed route of ground cells (see [`crate::path::find_path`]).
+    pub fn walk_route(&mut self, route: &[(i32, i32)]) -> io::Result<()> {
+        for &(cx, cz) in route.iter().skip(1) {
+            self.walk_to(cx as f64 + 0.5, cz as f64 + 0.5)?;
+            if self.kicked.is_some() {
+                break;
+            }
         }
         Ok(())
     }

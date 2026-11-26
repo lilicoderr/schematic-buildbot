@@ -6,6 +6,7 @@
 //! first. Works on creative-mode servers (it puts blocks in hand via set-creative-slot).
 
 use mc_bot::builder::PlayClient;
+use mc_bot::path::{find_path, Cell};
 use mc_bot::placement::{self, Action};
 use mc_bot::progress::Progress;
 use mc_bot::schematic::{Block, Schematic};
@@ -384,8 +385,8 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
             Action::Place(p) => p,
         };
         if !within_reach(bot.feet, world) {
-            if let Some((sx, sz)) = stand_cell(bot.feet, world, origin.y, &occupied) {
-                bot.walk_to(sx + 0.5, sz + 0.5)?;
+            if let Some(route) = route_to_reach(bot.feet, world, origin.y, &occupied) {
+                bot.walk_route(&route)?;
             }
         }
         if bot.place(world, item, &plan)? {
@@ -466,34 +467,26 @@ impl Stats {
     }
 }
 
-/// Find a ground cell from which `world` is within reach, preferring the cell closest to `cur`.
-/// Cells inside the structure (feet or head) are avoided.
-fn stand_cell(cur: Vec3, world: BlockPos, feet_y: i32, occupied: &HashSet<(i32, i32, i32)>) -> Option<(f64, f64)> {
-    let mut best: Option<(f64, (f64, f64))> = None;
-    for r in 1i32..=4 {
-        for dx in -r..=r {
-            for dz in -r..=r {
-                if dx.abs() != r && dz.abs() != r {
-                    continue; // ring border only
-                }
-                let (cx, cz) = (world.x + dx, world.z + dz);
-                if occupied.contains(&(cx, feet_y, cz)) || occupied.contains(&(cx, feet_y + 1, cz)) {
-                    continue;
-                }
-                let feet = Vec3::new(cx as f64 + 0.5, feet_y as f64, cz as f64 + 0.5);
-                if within_reach(feet, world) {
-                    let d = cur.horiz_dist(feet);
-                    if best.is_none_or(|(bd, _)| d < bd) {
-                        best = Some((d, (feet.x, feet.z)));
-                    }
-                }
+/// Route over ground cells to a spot from which `world` is within reach, walking *around*
+/// the structure (feet and head cells of the whole blueprint are treated as walls).
+fn route_to_reach(cur: Vec3, world: BlockPos, feet_y: i32, occupied: &HashSet<(i32, i32, i32)>) -> Option<Vec<Cell>> {
+    let blocked = |x: i32, z: i32| occupied.contains(&(x, feet_y, z)) || occupied.contains(&(x, feet_y + 1, z));
+    let start = (cur.x.floor() as i32, cur.z.floor() as i32);
+    let mut candidates: Vec<(f64, Cell)> = Vec::new();
+    for dx in -5..=5 {
+        for dz in -5..=5 {
+            let (cx, cz) = (world.x + dx, world.z + dz);
+            if blocked(cx, cz) {
+                continue;
+            }
+            let feet = Vec3::new(cx as f64 + 0.5, feet_y as f64, cz as f64 + 0.5);
+            if within_reach(feet, world) {
+                candidates.push((cur.horiz_dist(feet), (cx, cz)));
             }
         }
-        if best.is_some() {
-            break;
-        }
     }
-    best.map(|(_, c)| c)
+    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+    candidates.iter().take(30).find_map(|(_, c)| find_path(start, *c, &blocked, 8))
 }
 
 #[cfg(test)]
@@ -527,9 +520,13 @@ mod tests {
     }
 
     #[test]
-    fn stand_cell_avoids_structure() {
-        let occupied: HashSet<(i32, i32, i32)> = [(1, 0, 0)].into_iter().collect();
-        assert!(stand_cell(Vec3::new(0.5, 0.0, 0.5), BlockPos::new(0, 0, 0), 0, &occupied).is_some());
+    fn route_goes_around_the_structure() {
+        // A wall of blocks between the bot and the target forces a detour.
+        let occupied: HashSet<(i32, i32, i32)> = (-2..=2).map(|z| (5, 0, z)).collect();
+        let route = route_to_reach(Vec3::new(0.5, 0.0, 0.5), BlockPos::new(6, 0, 0), 0, &occupied).unwrap();
+        assert!(route.iter().all(|&(x, z)| !occupied.contains(&(x, 0, z))));
+        let last = *route.last().unwrap();
+        assert!(within_reach(Vec3::new(last.0 as f64 + 0.5, 0.0, last.1 as f64 + 0.5), BlockPos::new(6, 0, 0)));
     }
 
     #[test]
