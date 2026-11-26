@@ -120,6 +120,38 @@ impl Schematic {
         v
     }
 
+    /// Layer-by-layer ASCII view (one symbol per distinct block, most common first).
+    pub fn ascii_layers(&self) -> String {
+        const SYMS: &[u8] = b"#ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let counts = self.block_counts();
+        let sym = |i: usize| *SYMS.get(i).unwrap_or(&b'?') as char;
+        let sym_of = |name: &str| sym(counts.iter().position(|(n, _)| n == name).unwrap_or(0));
+        let (min, max) = self.bounds();
+        let w = (max.x - min.x + 1) as usize;
+        let d = (max.z - min.z + 1) as usize;
+        let mut out = String::new();
+        for y in min.y..=max.y {
+            let mut grid = vec![vec!['.'; w]; d];
+            let mut any = false;
+            for b in self.blocks.iter().filter(|b| b.pos.y == y) {
+                grid[(b.pos.z - min.z) as usize][(b.pos.x - min.x) as usize] = sym_of(&b.name);
+                any = true;
+            }
+            if !any {
+                continue;
+            }
+            out.push_str(&format!("layer y={y}\n"));
+            for row in grid {
+                out.push_str(&row.into_iter().collect::<String>());
+                out.push('\n');
+            }
+        }
+        let legend: Vec<String> =
+            counts.iter().enumerate().map(|(i, (n, _))| format!("{}={}", sym(i), n)).collect();
+        out.push_str(&format!("legend: {}\n", legend.join(" ")));
+        out
+    }
+
     pub fn bounds(&self) -> (BlockPos, BlockPos) {
         let mut min = self.blocks[0].pos;
         let mut max = self.blocks[0].pos;
@@ -170,6 +202,15 @@ mod tests {
         let counts = s.block_counts();
         assert_eq!(counts[0], ("stone".to_string(), 5));
         assert_eq!(counts[1], ("glass".to_string(), 1));
+    }
+
+    #[test]
+    fn ascii_layers_shows_grid_and_legend() {
+        let s = Schematic::parse("palette S stone\npalette G glass\nlayer 0\nSS\nSG\n").unwrap();
+        let a = s.ascii_layers();
+        assert!(a.contains("layer y=0\n##\n#A\n"));
+        assert!(a.contains("#=stone"));
+        assert!(a.contains("A=glass"));
     }
 
     #[test]

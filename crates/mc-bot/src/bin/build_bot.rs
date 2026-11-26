@@ -115,6 +115,7 @@ fn print_summary(schem: &Schematic) {
         max.x - min.x + 1, max.y - min.y + 1, max.z - min.z + 1,
         min.x, max.x, min.y, max.y, min.z, max.z, schem.blocks.len()
     );
+    println!("\n{}", schem.ascii_layers());
     let mut unknown = Vec::new();
     println!("블록 종류:");
     for (name, count) in schem.block_counts() {
