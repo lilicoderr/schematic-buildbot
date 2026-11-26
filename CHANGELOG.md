@@ -3,18 +3,35 @@
 ## [Unreleased]
 
 ### Added
-- `.litematic` 파서(`litematic.rs`): 다중 리전, 비트 패킹 BlockStates, 음수 Size 정규화.
-- `--dry-run` 이 층별 ASCII 도면과 공중(받침 없는) 블록 경고를 출력한다.
-- `--delay-ms <N>` 설치 간 대기 설정 (패킷 레이트 제한이 엄격한 서버용).
-- `tools/preview.py`: 설계도(.txt/.schem) → 아이소메트릭 PNG (표준 라이브러리만). CI 스모크 테스트 포함.
-- `Schematic::ascii_layers`, `Schematic::floating_blocks` 와 테스트.
+- Block-state support: stairs `facing`/`half`, slabs `type` (incl. double), log/pillar `axis`,
+  and `facing` for doors, fence gates, beds, furnaces, chests and similar (`placement.rs`).
+  States are read from `.schem`, `.litematic` (palette `Properties`) and the text format (`oak_stairs[facing=east]`).
+- Anchored build order (`Schematic::plan_order`): overhangs are built from neighbours; unplaceable floating blocks are reported.
+- `--resume` / `--progress-file`: continue an interrupted build at the same origin.
+- `--rate N` placements per second; `--version V` with a version table (`version.rs`).
+- `--lang en|ko` and `BUILDBOT_LANG`; the CLI is English by default (Korean locale auto-detected).
+- `.litematic` is now reachable from the CLI (the parser existed but was not wired in).
+- `blueprints/stair-tower.txt` showcasing block states; `docs/stair-tower.png`.
+- `--dry-run` reports which block states will be reproduced exactly and which fall back to the default.
+- CI: `clippy -D warnings` and a bilingual `--dry-run` smoke test.
 
 ### Changed
-- README 를 기능 표·동작 원리 다이어그램 중심으로 재작성.
-- clippy 경고 정리(`io::Error::other`, 테스트 상수).
+- README is now English-first; the Korean version moved to `README.ko.md`.
+- Source comments, blueprints, CHANGELOG and CONTRIBUTING are in English.
+- `PlayClient::place_block` replaced by `PlayClient::place(pos, item, &Plan)`.
+- `proto::handshake` takes the protocol number; `login_offline_v` announces an explicit one.
+
+### Fixed
+- Remaining clippy warnings.
+- `preview.py` strips block-state brackets and colours stairs/slabs like their base material.
+
+## 0.2.0 (unreleased tag)
+
+- `.litematic` parser (multi-region, bit-packed palette), `--dry-run` ASCII layer map with floating-block warnings,
+  `--delay-ms`, stdlib-only `tools/preview.py`.
 
 ## 0.1.0
 
-- 1.21.1(767) 프로토콜 직접 구현: 핸드셰이크·로그인·Configuration·Play.
-- `.schem`(Sponge v2/v3) 및 URL 직링크 건축, 블록 1333종.
-- 지면 이동 기반 건축으로 anti-cheat 킥 없음.
+- Hand-written 1.21.1 (767) protocol: handshake, login, Configuration, Play.
+- `.schem` (Sponge v2/v3) and direct-URL builds, 1333 block types.
+- Ground-walking builds with no anti-cheat kicks.
