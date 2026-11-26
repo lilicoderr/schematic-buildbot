@@ -1,0 +1,17 @@
+# 작은 오두막 (3x3x3) — build-bot 기본 예시
+name 작은 오두막
+palette W white_concrete
+palette G glass
+palette R red_concrete
+layer 0
+WWW
+W.W
+WWW
+layer 1
+WGW
+G.G
+WGW
+layer 2
+RRR
+RRR
+RRR

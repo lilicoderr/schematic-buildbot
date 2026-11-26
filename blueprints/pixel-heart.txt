@@ -1,0 +1,11 @@
+# 땅에 그리는 하트 (한 층) — 걸어다니며 바닥에 설치
+name 하트
+palette R red_concrete
+palette . air
+layer 0
+.RR.RR.
+RRRRRRR
+RRRRRRR
+.RRRRR.
+..RRR..
+...R...
