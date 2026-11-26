@@ -8,8 +8,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Build & test
         run: cargo test --workspace
+      - name: Dry-run smoke test (en + ko)
+        run: |
+          cargo run -q --bin build-bot -- x x blueprints/cottage.txt --dry-run
+          cargo run -q --bin build-bot -- x x blueprints/cottage.txt --dry-run --lang ko
+          cargo run -q --bin build-bot -- x x crates/mc-bot/tests/fixtures/sample.schem --dry-run
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
