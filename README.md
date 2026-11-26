@@ -1,45 +1,82 @@
-# schematic-buildbot
-![CI](https://github.com/GigongDohyun/schematic-buildbot/actions/workflows/ci.yml/badge.svg)
+<h1 align="center">schematic-buildbot</h1>
 
-**Rust** 로 Minecraft **1.21.1** 프로토콜(767)을 직접 구현한 — 라이브러리 없이 — 봇.
-mineflayer/azalea 같은 기성 봇 프레임워크를 쓰지 않고, 핸드셰이크·로그인·설정·플레이 패킷을 손으로 파싱한다.
+<p align="center">
+  <b>Minecraft 설계도(<code>.schem</code>)를 URL 한 줄로 받아 서버에 대신 지어주는 Rust 봇</b><br>
+  프로토콜(1.21.1 / 767)을 라이브러리 없이 손으로 구현 · 공중부양/과속 없이 걸어 다니며 건축 · 킥 없음
+</p>
 
-두 가지를 한다.
+<p align="center">
+  <a href="https://github.com/lilicoderr/schematic-buildbot/actions/workflows/ci.yml"><img src="https://github.com/lilicoderr/schematic-buildbot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/rust-stable-orange?logo=rust" alt="Rust">
+  <img src="https://img.shields.io/badge/minecraft-1.21.1-62B47A" alt="Minecraft 1.21.1">
+  <img src="https://img.shields.io/badge/blocks-1333-blue" alt="1333 blocks">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+</p>
 
-1. **packet-probe** — 서버에 붙어 프로토콜을 "리버스"로 관찰한다. keepalive·텔레포트에 정확히 응답해 **킥당하지 않고** Play 패킷 흐름을 수집·분류한다.
-2. **build-bot** — 설계도(blueprint)대로 블록을 짓는다. **지면을 걸어 다니며**(공중부양·과속 없이) 설치해 이동 검증(anti-cheat)에 걸리지 않는다.
+<p align="center">
+  <img src="docs/cottage.png" alt="cottage preview" width="220">
+  <img src="docs/pixel-heart.png" alt="pixel heart preview" width="260">
+</p>
+<p align="center"><sub>`tools/preview.py` 로 렌더한 설계도 미리보기 (서버 없이 생성)</sub></p>
 
-> 대상은 `online-mode=false`(오프라인) 서버. 온라인 모드는 Mojang 인증/암호화가 필요해 범위를 벗어난다.
-> 실제 1.21.1 바닐라 서버에서 로그인→유지→건축을 검증했다.
+## 한눈에 보기
 
-## 왜 손으로 구현했나
+```bash
+# 설계도 공유 사이트의 .schem 직링크를 그대로 넣으면, 받아서 지어준다 (딸깍)
+build-bot 127.0.0.1:25565 MyBot https://example.com/castle.schem
 
-- 요구가 "프로토콜/패킷 레벨"이었다. VarInt(LEB128), Position 패킹(26/12/26), zlib 압축 프레이밍, Configuration 상태 전이, 오프라인 UUID(MD5)까지 전부 직접 구현하고 **위키 공식 테스트 벡터**로 검증했다.
-- 패킷 ID 는 `minecraft-data` 의 1.21.1 정의와 대조해 맞췄다. (예: Play clientbound KeepAlive = `0x26`, Chunk = `0x27`)
+# 서버 없이 검증만: 크기·블록 종류·층별 ASCII 도면·공중 블록 경고
+build-bot x x castle.schem --dry-run
+```
+
+```text
+=== 설계도 검증: '작은 오두막' ===
+크기 3x3x3, 총 25블록
+
+layer y=0      layer y=1      layer y=2
+###            #B#            AAA
+#.#            B.B            AAA
+###            #B#            AAA
+legend: #=white_concrete A=red_concrete B=glass
+모든 블록이 설치 가능합니다. ✅
+```
+
+## 기능
+
+| 기능 | 상태 |
+|---|---|
+| 프로토콜 직접 구현 (핸드셰이크·로그인·Configuration·Play, zlib 압축, 오프라인 UUID) | ✅ |
+| `.schem` (Sponge v2/v3) 설계도 + 텍스트 레이어 포맷 | ✅ |
+| URL 로 바로 받아 건축 (`http(s)://…/x.schem`) | ✅ |
+| 블록 1333종 지원 (블록→아이템 ID 테이블) | ✅ |
+| `--dry-run` 검증 + 층별 ASCII 도면 + 공중 블록 경고 | ✅ |
+| 걸어 다니며 설치 (`on_ground`, 틱당 걷기 속도 이하) — anti-cheat 안전 | ✅ |
+| `--delay-ms` 로 설치 속도 제한 (패킷 레이트 제한 서버용) | ✅ |
+| `tools/preview.py` — 설계도 → 아이소메트릭 PNG (Python 표준 라이브러리만) | ✅ |
+| 블록 상태(계단 방향·반블록 위치 등) | 🚧 현재는 기본 상태로 설치 |
+| `.litematic` | 🚧 `.schem` 으로 변환 필요 |
+| 다른 버전 서버 | 🚧 [ViaProxy](https://github.com/ViaVersion/ViaProxy) 경유 · 패킷 ID 표 분리 예정 |
+| 생존 모드 + 상자에서 자재 꺼내기 | 🚧 필요한 패킷 ID 는 매핑됨 |
 
 ## 빌드 · 실행
 
 ```bash
 cargo build --release
 
-# 1) 패킷 분석 (서버 목록 핑)
-./target/release/packet-probe status 127.0.0.1:25566
-
-# 2) 로그인 후 Play 패킷 6초 수집·분류 (킥 없이)
-./target/release/packet-probe probe 127.0.0.1:25566 ProbeBot 6
-
-# 3) 설계도대로 건축
-./target/release/build-bot 127.0.0.1:25566 BuildBot blueprints/cottage.txt
+./target/release/build-bot 127.0.0.1:25566 BuildBot blueprints/cottage.txt        # 건축
+./target/release/build-bot x x blueprints/cottage.txt --dry-run                     # 검증만
+./target/release/packet-probe probe 127.0.0.1:25566 ProbeBot 6                     # 패킷 6초 수집·분류
+python tools/preview.py blueprints/cottage.txt -o docs/cottage.png --scale 36       # 미리보기 PNG
 ```
 
-### 로컬 테스트 서버 (오프라인)
+대상은 `online-mode=false`(오프라인) 서버. 로컬 테스트는 바닐라 1.21.1 을 `online-mode=false`, `gamemode=creative` 로 띄우면 된다
+(봇은 크리에이티브에서 블록을 손에 들어 설치한다).
 
-바닐라 1.21.1 서버를 `online-mode=false`, `level-type=minecraft:flat`, `gamemode=creative` 로 띄우면 된다.
-(build-bot 은 크리에이티브에서 블록을 손에 들어 설치한다. 아래 "로드맵" 참고.)
+> 온라인 모드(Mojang 인증/암호화)는 범위 밖이다. 남의 서버에서는 반드시 서버 운영자의 허락을 받고 사용할 것.
 
 ## 설계도 포맷
 
-사람이 손으로 그리기 쉬운 레이어/팔레트 텍스트. `blueprints/` 예시 참고.
+`.schem` 외에, 손으로 그리기 쉬운 레이어/팔레트 텍스트도 지원한다 (`blueprints/` 참고).
 
 ```text
 name 작은 오두막
@@ -47,51 +84,58 @@ palette W white_concrete
 palette G glass
 layer 0          # y=0 평면. 아래 각 줄이 z 증가, 글자가 x 증가
 WWW
-W.W              # '.' 또는 공백 = 공기(건너뜀)
+W.W              # '.' 또는 공백 = 공기
 WWW
 layer 1
 WGW
-...
 ```
 
-지원 블록 이름은 `crates/mc-bot/src/blocks.rs`(생성됨) 참고. 흰/빨강 등 콘크리트, 유리, 양모, 돌 종류 등 44종.
+## 동작 원리
 
-## 구조
-
-```
-mc-build-bot/
-├─ crates/mc-proto/      프로토콜 기초 (의존성: flate2 뿐)
-│  ├─ buf.rs             VarInt/VarLong, 문자열, Position, UUID …
-│  └─ frame.rs           길이 프리픽스 + zlib 압축 프레이밍
-└─ crates/mc-bot/
-   ├─ net.rs             TCP 연결 래퍼
-   ├─ proto.rs           핸드셰이크·상태핑·오프라인 로그인(MD5 UUID)·Config
-   ├─ ids.rs             1.21.1 패킷 ID (minecraft-data 대조)
-   ├─ world.rs           좌표·시야(yaw/pitch)·도달거리
-   ├─ schematic.rs       설계도 파서
-   ├─ builder.rs         Play 클라이언트: 이동·설치·keepalive 응답
-   ├─ blocks.rs          블록→아이템 ID (생성)
-   └─ bin/               packet-probe, build-bot
+```mermaid
+flowchart LR
+  A[".schem / URL / .txt"] --> B["파서 (nbt.rs · schem.rs · schematic.rs)"]
+  B --> C["건축 순서: 아래층부터"]
+  C --> D{"도달 거리 안?"}
+  D -- 아니오 --> E["받침 지면 칸으로 걸어 이동 (anti-cheat 안전 속도)"]
+  E --> D
+  D -- 예 --> F["아래 블록 윗면 클릭 → 설치 (Use Item On)"]
+  F --> G["keepalive · 텔레포트 확인 응답으로 킥 방지"]
 ```
 
-## 검증
+```text
+crates/mc-proto/      VarInt/VarLong, 문자열, Position, UUID, 길이 프레이밍 + zlib (의존성: flate2)
+crates/mc-bot/
+  net.rs  proto.rs    TCP · 핸드셰이크/상태핑/오프라인 로그인/Config
+  ids.rs              1.21.1 패킷 ID (minecraft-data 대조)
+  world.rs            좌표 · 시야(yaw/pitch) · 도달 거리
+  nbt.rs schem.rs     NBT 리더 · Sponge .schem 파서
+  schematic.rs        설계도 모델 · 건축 순서 · ASCII 도면 · 공중 블록 검출
+  builder.rs          Play 클라이언트: 이동 · 설치 · keepalive
+  blocks.rs           블록 → 아이템 ID (1333종)
+  bin/                build-bot, packet-probe
+tools/preview.py      설계도 → 아이소메트릭 PNG
+```
 
-- `cargo test` — 19개 (VarInt 공식 벡터, Position 왕복, zlib, MD5 RFC 벡터, 설계도 파싱, 도달거리 등)
-- 실서버(로컬 1.21.1): `probe` 가 keepalive·텔레포트에 응답하며 **킥 없이** 패킷 수집.
-  `build-bot` 이 3×3 오두막(25블록)을 **전부 설치**(흰12·유리4·빨강9), 도달실패 0, 킥 없음 — RCON 개수로 확인.
+## 왜 손으로 구현했나
+
+- 패킷/프로토콜 수준을 직접 이해하고 검증하려고. VarInt(LEB128), Position 패킹(26/12/26), zlib 프레이밍, Configuration 전이, 오프라인 UUID(MD5)를 직접 구현하고 공식 테스트 벡터로 검증했다.
+- 패킷 ID 는 [minecraft-data](https://github.com/PrismarineJS/minecraft-data) 1.21.1 정의와 대조했다.
 
 ## 이동과 anti-cheat
 
-- 항상 `on_ground=true` 로, 한 틱당 이동량을 걷기 속도(~0.26블록) 이하로 제한해 조금씩 보낸다 → "moved too quickly"/"flying is not enabled" 로 **킥당하지 않는다.**
-- 블록은 "아래 블록의 윗면"을 눌러 설치하므로 받침 없는 공중 설치를 하지 않는다.
+- 항상 `on_ground=true`, 틱당 이동량을 걷기 속도(~0.26블록) 이하로 제한 → "moved too quickly"/"flying is not enabled" 킥 없음.
+- 블록은 "아래 블록의 윗면"을 눌러 설치하므로 받침 없는 공중 설치를 하지 않는다. 받침이 없는 블록은 `--dry-run` 이 미리 경고한다.
 - 서버의 Synchronize Player Position(텔레포트)에는 Confirm Teleport 로 즉시 응답한다.
 
-## 로드맵 (다음 단계)
+## 검증
 
-- **생존 모드 + 상자에서 자재 꺼내기**: "주변 상자에 블록을 넣어두면 꺼내서 짓기". 필요한 패킷 ID 는 이미 매핑돼 있다 — Open Screen(`0x33`), Set Container Content(`0x13`), Window Click(`0x0E`), Close(`0x0F`). 1.21 의 새 Slot 컴포넌트 포맷 파싱이 관건.
-- **비계 쌓아 올라가기(pillar-up)**: 도달 범위를 넘는 높은 구조물.
-- **.litematic / .schem(스펀지 NBT) 불러오기**: 외부 설계도 포맷.
-- **ViaProxy 연동**으로 최신 azalea 없이 다른 버전 서버 접속.
+- `cargo test --workspace` — 단위 테스트 (VarInt/Position/zlib/MD5 벡터, 설계도·`.schem` 파싱, ASCII 도면, 공중 블록, 도달 거리 …)
+- 실서버(로컬 1.21.1): 3×3 오두막 25블록 **전부 설치**, 도달실패 0, 킥 없음 (RCON 개수로 확인).
+
+## 기여
+
+[CONTRIBUTING.md](CONTRIBUTING.md) · 변경 내역은 [CHANGELOG.md](CHANGELOG.md).
 
 ## 라이선스
 
