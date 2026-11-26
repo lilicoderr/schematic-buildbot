@@ -28,7 +28,7 @@ def parse_text(src):
             continue
         if head == "palette":
             _, ch, name = line.split(None, 2)
-            palette[ch[0]] = name.strip()
+            palette[ch[0]] = name.strip().split("[")[0].removeprefix("minecraft:")
         elif head == "layer":
             y = int(line.split()[1])
             z = 0
@@ -144,6 +144,13 @@ KNOWN = {
 def colour(name):
     if name in KNOWN:
         return KNOWN[name]
+    # Stairs, slabs and walls share the colour of their base material.
+    for suffix in ("_stairs", "_slab", "_wall", "_fence"):
+        if name.endswith(suffix):
+            base = name[: -len(suffix)]
+            for cand in (base, base + "_planks", base + "s", base + "_block"):
+                if cand in KNOWN:
+                    return KNOWN[cand]
     h = hashlib.md5(name.encode()).digest()
     return tuple(70 + h[i] % 160 for i in range(3))
 

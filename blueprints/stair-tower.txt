@@ -1,0 +1,26 @@
+# A small stair-and-log tower that exercises block states (facing, half, axis, double slab).
+name Stair tower
+palette S stone_bricks
+palette L oak_log[axis=y]
+palette N oak_stairs[facing=north,half=bottom]
+palette E oak_stairs[facing=east,half=bottom]
+palette D stone_slab[type=double]
+palette B stone_slab[type=bottom]
+layer 0
+LSSSL
+S...S
+S.D.S
+S...S
+LSSSL
+layer 1
+LSSSL
+S...S
+S.S.S
+S...S
+LSNSL
+layer 2
+LSSSL
+S...S
+S.E.S
+S...S
+LBBBL

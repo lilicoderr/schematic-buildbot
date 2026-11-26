@@ -1,5 +1,5 @@
-# 작은 오두막 (3x3x3) — build-bot 기본 예시
-name 작은 오두막
+# Small cottage (3x3x3) — the build-bot default example
+name Small cottage
 palette W white_concrete
 palette G glass
 palette R red_concrete

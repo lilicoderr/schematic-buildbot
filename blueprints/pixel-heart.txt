@@ -1,5 +1,5 @@
-# 땅에 그리는 하트 (한 층) — 걸어다니며 바닥에 설치
-name 하트
+# A heart drawn on the ground (one layer) — the bot walks around and places it
+name Pixel heart
 palette R red_concrete
 palette . air
 layer 0
