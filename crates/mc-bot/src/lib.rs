@@ -20,6 +20,7 @@ pub mod schem;
 pub mod sim;
 pub mod slice;
 pub mod slice_stats;
+pub mod support;
 pub mod schematic;
 pub mod version;
 pub mod world;

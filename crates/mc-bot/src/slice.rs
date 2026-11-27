@@ -12,6 +12,7 @@ use crate::plan::{block_hash, ClickStep, Header, Plan, Step};
 use crate::scaffold::{Mover, Site};
 use crate::schematic::{Block, Schematic};
 use crate::sim;
+use crate::support;
 use crate::world::{within_reach, BlockPos, Vec3};
 use std::collections::HashSet;
 use std::io;
@@ -98,10 +99,6 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             }
             Action::Place(p) => p,
         };
-        if pl.clicks.iter().any(|c| !solid(c.support) && c.support != world) {
-            unreachable.push((world, format!("{} (nothing to click against)", b.name)));
-            continue;
-        }
         let end = positions.len().min(i + LOOKAHEAD);
         site.approach(&mut rec, &positions[i..end]).map_err(|e| e.to_string())?;
         let here = feet_cell(rec.feet);
@@ -109,7 +106,36 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             unreachable.push((world, b.name.clone()));
             continue;
         }
+        let mut pl = pl;
+        let mut chain: Vec<support::Link> = Vec::new();
+        if pl.clicks.iter().any(|c| !solid(c.support) && c.support != world) {
+            let cellp = |p: BlockPos| (p.x, p.y, p.z);
+            let can_click = |p: BlockPos| site.terrain.solid(cellp(p));
+            let blocked = |p: BlockPos| blocks_cell(here, p);
+            match support::find_chain(world, rec.feet, &can_click, &blocked) {
+                Some(c) => chain = c,
+                None => {
+                    unreachable.push((world, format!("{} (nothing to click against)", b.name)));
+                    continue;
+                }
+            }
+            let cells: HashSet<BlockPos> = chain.iter().map(|l| l.pos).collect();
+            let with_chain = |p: BlockPos| solid(p) || cells.contains(&p);
+            match placement::plan(&Block { pos: world, ..(*b).clone() }, with_chain) {
+                Action::Place(p2) if p2.clicks.iter().all(|c| with_chain(c.support) || c.support == world) => pl = p2,
+                _ => {
+                    unreachable.push((world, format!("{} (nothing to click against)", b.name)));
+                    continue;
+                }
+            }
+            for l in &chain {
+                rec.steps.push(Step::Support { pos: l.pos, clicks: vec![l.click.clone()] });
+            }
+        }
         rec.steps.push(Step::Place { pos: world, state: state.clone(), yaw: pl.yaw, clicks: click_steps(&pl) });
+        for l in chain.iter().rev() {
+            rec.steps.push(Step::Break(l.pos));
+        }
         deviations += pl.unhonoured.len();
         placed.insert(world);
         site.terrain.add_block((world.x, world.y, world.z), crate::nav::is_standable_surface(&b.name, b.prop("type")));

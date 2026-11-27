@@ -24,6 +24,7 @@ pub struct SimReport {
     pub placed: usize,
     pub moves: usize,
     pub pillars: usize,
+    pub supports: usize,
     pub breaks: usize,
     pub checkpoints: usize,
 }
@@ -162,6 +163,11 @@ fn step_once(w: &mut World, st: &Step) -> Result<(), String> {
             Ok(())
         }
         Step::Place { pos, state, clicks, .. } => place(w, *pos, state, clicks),
+        Step::Support { pos, clicks } => {
+            place(w, *pos, SCAFFOLD, clicks)?;
+            w.scaffold.insert(cell(*pos));
+            Ok(())
+        }
         Step::Auto { pos, state } => {
             let name = split_state(state).0;
             let near = Face::HORIZONTAL.iter().chain([&Face::Up, &Face::Down]).any(|f| {
@@ -208,6 +214,7 @@ pub fn simulate(plan: &Plan, schem: &Schematic) -> Result<SimReport, SimError> {
             Step::Move(_) => rep.moves += 1,
             Step::Pillar(_) => rep.pillars += 1,
             Step::Place { .. } => rep.placed += 1,
+            Step::Support { .. } => rep.supports += 1,
             Step::Break(_) => rep.breaks += 1,
             Step::Checkpoint { .. } => rep.checkpoints += 1,
             Step::Auto { .. } => {}

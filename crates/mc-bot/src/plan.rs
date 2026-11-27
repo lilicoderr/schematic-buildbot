@@ -23,6 +23,9 @@ pub enum Step {
     Pillar(Cell),
     /// Place `state` at `pos` by clicking (all clicks, in order) while standing still.
     Place { pos: BlockPos, state: String, yaw: Option<f32>, clicks: Vec<ClickStep> },
+    /// Temporary support block (like a 3D-printing support) so a later block has something to click.
+    /// Removed again with `Break` before the plan ends.
+    Support { pos: BlockPos, clicks: Vec<ClickStep> },
     /// A block that appears by itself as part of the previous placement (e.g. a door's upper half).
     Auto { pos: BlockPos, state: String },
     /// Break one block (creative: instant). Only scaffold may be broken.
@@ -54,6 +57,13 @@ fn face_name(f: Face) -> &'static str {
     ["down", "up", "north", "south", "west", "east"][f as usize]
 }
 
+fn write_clicks(f: &mut fmt::Formatter<'_>, clicks: &[ClickStep]) -> fmt::Result {
+    for c in clicks {
+        write!(f, " {},{},{},{},{},{},{}", c.support.x, c.support.y, c.support.z, face_name(c.face), c.cursor.0, c.cursor.1, c.cursor.2)?;
+    }
+    Ok(())
+}
+
 impl fmt::Display for Step {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -62,16 +72,17 @@ impl fmt::Display for Step {
             Step::Auto { pos, state } => write!(f, "AUTO {} {} {} {state}", pos.x, pos.y, pos.z),
             Step::Break(p) => write!(f, "BREAK {} {} {}", p.x, p.y, p.z),
             Step::Checkpoint { n, count, hash } => write!(f, "CHECKPOINT {n} {count} {hash:016x}"),
+            Step::Support { pos, clicks } => {
+                write!(f, "SUPPORT {} {} {}", pos.x, pos.y, pos.z)?;
+                write_clicks(f, clicks)
+            }
             Step::Place { pos, state, yaw, clicks } => {
                 write!(f, "PLACE {} {} {} {state} ", pos.x, pos.y, pos.z)?;
                 match yaw {
                     Some(y) => write!(f, "{y}")?,
                     None => write!(f, "-")?,
                 }
-                for c in clicks {
-                    write!(f, " {},{},{},{},{},{},{}", c.support.x, c.support.y, c.support.z, face_name(c.face), c.cursor.0, c.cursor.1, c.cursor.2)?;
-                }
-                Ok(())
+                write_clicks(f, clicks)
             }
         }
     }

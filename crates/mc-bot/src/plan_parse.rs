@@ -73,6 +73,10 @@ pub fn parse(text: &str) -> Result<Plan, String> {
                 count: num(it.next(), line)?,
                 hash: u64::from_str_radix(it.next().unwrap_or(""), 16).map_err(|e| e.to_string())?,
             },
+            Some("SUPPORT") => {
+                let pos = BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?);
+                Step::Support { pos, clicks: it.map(|t| click(t, line)).collect::<Result<Vec<_>, _>>()? }
+            }
             Some("PLACE") => {
                 let pos = BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?);
                 let state = it.next().ok_or_else(|| format!("line {line}: no state"))?.to_string();
@@ -115,6 +119,10 @@ mod tests {
                 clicks: vec![ClickStep { support: BlockPos::new(2, 63, 2), face: Face::Up, cursor: (0.5, 1.0, 0.75) }],
             },
             Step::Auto { pos: BlockPos::new(2, 65, 2), state: "oak_door[half=upper]".into() },
+            Step::Support {
+                pos: BlockPos::new(3, 64, 2),
+                clicks: vec![ClickStep { support: BlockPos::new(3, 63, 2), face: Face::Up, cursor: (0.5, 1.0, 0.5) }],
+            },
             Step::Break(BlockPos::new(1, 64, 2)),
             Step::Checkpoint { n: 1, count: 1, hash: 0xabc },
         ];
