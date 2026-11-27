@@ -25,6 +25,8 @@ pub struct Report {
     pub refused: usize,
     pub checkpoints: usize,
     pub repaired: usize,
+    /// Times the server teleported the bot mid-run and it resynchronised.
+    pub resyncs: usize,
     pub missing: Vec<BlockPos>,
     pub elapsed: Duration,
     /// Placements per second in each window of 100 placements.
@@ -88,6 +90,7 @@ pub fn run(
             return Ok(rep);
         }
     }
+    let mut teleports = bot.teleports;
     // level moves collected so the bot walks them in one go
     let mut level: Vec<Cell> = Vec::new();
 
@@ -176,6 +179,16 @@ pub fn run(
         }
         rep.spent[kind] += t_step.elapsed().as_secs_f64();
         rep.counts[kind] += 1;
+        if bot.teleports != teleports && level.is_empty() {
+            // The server rejected a move (for example after a lag spike) and put us back: everything
+            // since then may have failed silently. Walk back and re-place what is missing now.
+            rep.resyncs += 1;
+            say(&format!("server teleported the bot at step {} ({st}): resynchronising", i + 1));
+            bot.idle(Duration::from_millis(500))?;
+            exec_repair::return_to(bot, &world, off, say)?;
+            rep.repaired += exec_repair::repair(bot, &world, &sent, off, say)?;
+            teleports = bot.teleports;
+        }
         rep.steps_done = i + 1;
         if level.is_empty() {
             on_step(i + 1, off);

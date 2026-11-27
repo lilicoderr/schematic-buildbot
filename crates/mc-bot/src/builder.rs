@@ -346,7 +346,7 @@ impl PlayClient {
             if self.feet.horiz_dist(hold) <= 0.05 || self.kicked.is_some() || self.teleports != teleports {
                 break;
             }
-            self.feet = walk_step(self.feet, hold);
+            self.feet = motion::advance(self.feet, &[hold], &mut 0, self.stride);
             self.send_pos(false)?;
             self.tick()?;
         }
@@ -366,7 +366,7 @@ impl PlayClient {
             if self.feet.horiz_dist(level) <= 0.05 || self.kicked.is_some() || self.teleports != teleports {
                 break;
             }
-            self.feet = walk_step(self.feet, level);
+            self.feet = motion::advance(self.feet, &[level], &mut 0, self.stride);
             self.send_pos(self.feet.horiz_dist(level) > 0.3)?;
             self.tick()?;
         }

@@ -73,6 +73,7 @@ fn report(plan: &Plan, r: &Report, teleports: u32) {
             r.elapsed.as_secs_f64(), r.placed as f64 / r.elapsed.as_secs_f64().max(0.001), u8::from(r.kicked.is_some()), teleports
         )
     );
+    println!("{}", tr!("resynchronisations after server teleports: {}", "서버 텔레포트 후 재동기화: {}", r.resyncs));
     if !r.windows.is_empty() {
         let w: Vec<String> = r.windows.iter().map(|x| format!("{x:.1}")).collect();
         println!("{}", tr!("blocks/s per 100 placements: {}", "100개당 블록/초: {}", w.join(" ")));
