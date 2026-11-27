@@ -29,7 +29,7 @@ jobs:
       - name: Factory generator is reproducible and parses
         run: |
           python tools/gen_factory.py --size small -o /tmp/factory-small.schem
-          cmp /tmp/factory-small.schem blueprints/factory-small.schem
+          cmp <(gunzip -c /tmp/factory-small.schem) <(gunzip -c blueprints/factory-small.schem)
           python tools/gen_factory.py --size large -o /tmp/factory-large.schem
-          cmp /tmp/factory-large.schem blueprints/factory-large.schem
+          cmp <(gunzip -c /tmp/factory-large.schem) <(gunzip -c blueprints/factory-large.schem)
           cargo run -q --bin build-bot -- x x blueprints/factory-large.schem --dry-run | head -3
