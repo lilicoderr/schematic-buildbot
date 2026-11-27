@@ -48,6 +48,7 @@ pub const SB_PLAY_CLOSE_CONTAINER: i32 = 0x0F;
 pub const SB_PLAY_SET_CREATIVE_SLOT: i32 = 0x32;
 pub const SB_PLAY_BLOCK_DIG: i32 = 0x24;
 pub const SB_PLAY_USE_ITEM: i32 = 0x39;
+pub const SB_PLAY_ABILITIES: i32 = 0x23; // flags bit 0x02 = flying
 
 // ── Play (clientbound) ──  (1.21.1 / protocol 767, per minecraft-data)
 pub const CB_PLAY_KEEPALIVE: i32 = 0x26;
@@ -57,6 +58,8 @@ pub const CB_PLAY_SYNC_POS: i32 = 0x40; // Synchronize Player Position (teleport
 pub const CB_PLAY_DISCONNECT: i32 = 0x1D;
 pub const CB_PLAY_CHUNK: i32 = 0x27; // Chunk Data and Light (map_chunk)
 pub const CB_PLAY_BLOCK_CHANGE: i32 = 0x09;
+pub const CB_PLAY_MULTI_BLOCK_CHANGE: i32 = 0x49; // section blocks update
+pub const CB_PLAY_ABILITIES: i32 = 0x38; // flags: 0x02 flying, 0x04 may fly, 0x08 creative
 pub const CB_PLAY_OPEN_SCREEN: i32 = 0x33;
 pub const CB_PLAY_CONTAINER_CONTENT: i32 = 0x13; // window_items
 pub const CB_PLAY_CONTAINER_SLOT: i32 = 0x15; // set_slot
