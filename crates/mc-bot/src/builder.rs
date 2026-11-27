@@ -39,6 +39,12 @@ pub fn walk_step(feet: Vec3, target: Vec3) -> Vec3 {
     Vec3::new(feet.x + dx / d * s, feet.y, feet.z + dz / d * s)
 }
 
+/// A read that simply timed out. Windows can also report a timed-out socket read as
+/// "overlapped I/O in progress" (os error 997) or WSAETIMEDOUT (10060).
+fn is_timeout(e: &io::Error) -> bool {
+    matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) || matches!(e.raw_os_error(), Some(997 | 10060 | 10035))
+}
+
 pub struct PlayClient {
     pub conn: Connection,
     pub feet: Vec3,
@@ -152,7 +158,7 @@ impl PlayClient {
                 }
                 Ok(())
             }
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => Ok(()),
+            Err(e) if is_timeout(&e) => Ok(()),
             Err(e) => Err(e),
         }
     }
@@ -456,6 +462,13 @@ mod tests {
     fn supported(p: Vec3, ground_y: i32) -> bool {
         let solid = |_x: i32, y: i32, _z: i32| y < ground_y;
         solid(p.x.floor() as i32, p.y.floor() as i32 - 1, p.z.floor() as i32)
+    }
+
+    #[test]
+    fn windows_timeouts_are_not_fatal() {
+        assert!(is_timeout(&io::Error::from_raw_os_error(997)));
+        assert!(is_timeout(&io::Error::from(io::ErrorKind::WouldBlock)));
+        assert!(!is_timeout(&io::Error::from(io::ErrorKind::ConnectionReset)));
     }
 
     #[test]
