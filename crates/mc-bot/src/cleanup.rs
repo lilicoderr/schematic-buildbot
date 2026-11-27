@@ -31,9 +31,20 @@ impl Site {
     pub fn finish_while(&mut self, bot: &mut impl Mover, keep_going: &mut dyn FnMut(usize) -> bool) -> io::Result<usize> {
         self.spent = Some(HashSet::new());
         self.removed.clear();
-        let result = self.clean(bot, keep_going);
+        let mut result = self.clean(bot, keep_going);
+        // Rebuilding was barred where it happened twice; while that still helps, lift the bar
+        // for what is left.
+        let mut before = usize::MAX;
+        while let Ok(left) = result {
+            if left == 0 || left >= before || !keep_going(left) {
+                break;
+            }
+            before = left;
+            self.spent = Some(HashSet::new());
+            self.removed.clear();
+            result = self.clean(bot, keep_going);
+        }
         self.spent = None;
-        self.way = None;
         result
     }
 

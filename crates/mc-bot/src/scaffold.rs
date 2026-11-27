@@ -84,8 +84,8 @@ pub struct Site {
     /// terminates), and those removed once.
     spent: Option<HashSet<Cell>>,
     removed: HashSet<Cell>,
-    /// During cleanup: the last way down found (dropped whenever a block is added).
-    way: Option<WayHome>,
+    /// Ways down to the ground found so far.
+    way: WayHome,
     pub timing: Timing,
 }
 
@@ -95,7 +95,7 @@ fn pos(c: Cell) -> BlockPos {
 
 impl Site {
     pub fn new(terrain: Terrain) -> Self {
-        Site { terrain, scaffold: HashSet::new(), spent: None, removed: HashSet::new(), way: None, timing: Timing::default() }
+        Site { terrain, scaffold: HashSet::new(), spent: None, removed: HashSet::new(), way: WayHome::default(), timing: Timing::default() }
     }
 
     fn forget(&mut self, c: Cell) {
@@ -130,22 +130,33 @@ impl Site {
         self.scaffold.remove(&c);
         // the answer must hold after `forget(c)`, which may bar rebuilding there
         let bars = self.removed.contains(&c) && self.spent.as_mut().is_some_and(|s| s.insert(c));
-        let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: self.spent.as_ref(), max_nodes: 0 };
-        let known = self.way.as_ref().is_some_and(|w| w.still_leads_down(&query, here, c));
-        let ground = self.terrain.ground_y;
-        let ok = known || here.1 <= ground || {
-            let found = self.search(here, BlockPos::new(here.0, ground, here.2), &|g| g.1 <= ground, &[]);
-            if let (Some(acts), true) = (&found, self.spent.is_some()) {
-                let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: None, max_nodes: 0 };
-                self.way = Some(WayHome::new(&query, here, acts));
-            }
-            found.is_some()
-        };
+        let ok = self.way_down_from(here);
         if let (true, Some(s)) = (bars, &mut self.spent) {
             s.remove(&c);
         }
         self.terrain.add_block(c, true);
         self.scaffold.insert(c);
+        ok
+    }
+
+    /// [`Site::grounded`], answered from the remembered ways where possible.
+    fn way_down_from(&mut self, here: Cell) -> bool {
+        let ground = self.terrain.ground_y;
+        if here.1 <= ground {
+            return true;
+        }
+        let t = Instant::now();
+        let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: self.spent.as_ref(), max_nodes: SEARCH_NODES };
+        let way = &mut self.way;
+        let ok = way.leads_down(&query, here) || {
+            let joins = |c: Cell| c.1 <= ground || way.leads_down(&query, c);
+            let found = query.search(here, BlockPos::new(here.0, ground, here.2), &joins);
+            if let Some(acts) = &found {
+                way.remember(here, acts);
+            }
+            found.is_some()
+        };
+        self.timing.search += t.elapsed();
         ok
     }
 
@@ -201,7 +212,6 @@ impl Site {
     }
 
     fn add_scaffold(&mut self, c: Cell) {
-        self.way = None;
         self.terrain.add_block(c, true);
         self.scaffold.insert(c);
         self.timing.pillars_built += 1;

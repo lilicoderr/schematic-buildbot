@@ -1,6 +1,6 @@
-//! A remembered way down to the ground. Cleanup asks "may this scaffold block go without
-//! stranding the bot?" before every removal; one search answers that for every later question
-//! about blocks the remembered way does not use.
+//! Remembered ways down to the ground. Cleanup asks "may this scaffold block go without
+//! stranding the bot?" before every removal. The ways found so far form a tree rooted at the
+//! ground; a new search only has to reach any branch that still works.
 
 use crate::nav::Cell;
 use crate::navplan::{Act, Query};
@@ -8,58 +8,35 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct WayHome {
-    /// Cell on the way -> its index (0 = where the way was found from).
-    at: HashMap<Cell, usize>,
-    /// Block or cell -> the last index whose move still depends on it.
-    needed: HashMap<Cell, usize>,
-}
-
-fn under(c: Cell) -> Cell {
-    (c.0, c.1 - 1, c.2)
+    /// Cell -> the act that leads one step further down from it.
+    next: HashMap<Cell, Act>,
 }
 
 impl WayHome {
-    /// Remember the way `acts` leading from `start`.
-    pub fn new(query: &Query, start: Cell, acts: &[Act]) -> Self {
-        let mut way = WayHome::default();
-        let mut cur = start;
-        for (i, &act) in acts.iter().enumerate() {
-            way.at.insert(cur, i);
-            way.needed.insert(under(cur), i);
-            match act {
-                Act::Walk(_) | Act::Dig(_) => {}
-                Act::Bridge(to) => {
-                    way.needed.insert(under(to), i);
-                }
-                Act::StepDown(to) => {
-                    way.needed.insert(under(to), i);
-                    if let Some((side, _)) = query.side_support(under(to)) {
-                        way.needed.insert(side, i);
-                    }
-                }
-                Act::Pillar(_) => {
-                    way.needed.insert(cur, i);
-                }
+    /// Whether the remembered acts still lead from `from` to the ground in `query`'s terrain.
+    /// Every act is checked again, so changes to the terrain never make the answer stale.
+    /// (`false` only means a new search is needed.)
+    pub fn leads_down(&self, query: &Query, from: Cell) -> bool {
+        let mut at = from;
+        // a chain longer than the tree would be a loop
+        for _ in 0..=self.next.len() {
+            if at.1 <= query.terrain.ground_y {
+                return true;
             }
-            cur = act.to();
+            match self.next.get(&at) {
+                Some(act) if query.acts(at).contains(act) => at = act.to(),
+                _ => return false,
+            }
         }
-        way.at.insert(cur, acts.len());
-        way.needed.insert(under(cur), acts.len());
-        way
+        false
     }
 
-    fn holds_from(&self, cell: Cell, gone: Cell) -> bool {
-        self.at.get(&cell).is_some_and(|&i| self.needed.get(&gone).is_none_or(|&last| last < i))
-    }
-
-    /// Whether the remembered way surely still works from `here` once the block `gone` is
-    /// removed (`false` only means a new search is needed).
-    pub fn still_leads_down(&self, query: &Query, here: Cell, gone: Cell) -> bool {
-        if self.holds_from(here, gone) {
-            return true;
+    /// Add the way `acts` leading from `start`; it ends on the ground or on a working branch.
+    pub fn remember(&mut self, start: Cell, acts: &[Act]) {
+        let mut at = start;
+        for &act in acts {
+            self.next.insert(at, act);
+            at = act.to();
         }
-        // one level step off the way: walking back onto it is enough
-        under(here) != gone
-            && query.acts(here).iter().any(|a| matches!(a, Act::Walk(to) if self.holds_from(*to, gone)))
     }
 }
