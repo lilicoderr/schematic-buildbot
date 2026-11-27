@@ -256,7 +256,8 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             continue;
         }
         let mut chain: Vec<support::Link> = Vec::new();
-        if pl.clicks.iter().any(|c| !near(c.support) && c.support != world) {
+        // `plan_clicks` falls back to a floor click when nothing is usable, even one that would merge
+        if pl.clicks.iter().any(|c| c.support != world && (!near(c.support) || !safe(c))) {
             let cellp = |p: BlockPos| (p.x, p.y, p.z);
             let can_click = |p: BlockPos| site.terrain.solid(cellp(p));
             let blocked = |p: BlockPos| blocks_cell(here, p);
@@ -273,7 +274,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             let cells: HashSet<BlockPos> = chain.iter().map(|l| l.pos).collect();
             let with_chain = |p: BlockPos| near(p) || cells.contains(&p);
             match placement::plan_clicks(&Block { pos: world, ..(*b).clone() }, |c| with_chain(c.support) && safe(c)) {
-                Action::Place(p2) if p2.clicks.iter().all(|c| with_chain(c.support) || c.support == world) => pl = p2,
+                Action::Place(p2) if p2.clicks.iter().all(|c| c.support == world || (with_chain(c.support) && safe(c))) => pl = p2,
                 _ => {
                     unreachable.push((world, format!("{}/no_support", b.name)));
                     continue;

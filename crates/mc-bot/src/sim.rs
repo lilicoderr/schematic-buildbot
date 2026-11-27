@@ -283,6 +283,19 @@ pub fn apply(w: &mut World, st: &Step) -> Result<(), String> {
     }
 }
 
+/// A first click that would turn the clicked slab into a double slab leaves the target empty.
+fn merge_check(w: &World, st: &Step) -> Result<(), String> {
+    let Step::Place { pos, state, clicks, .. } = st else { return Ok(()) };
+    let Some(c) = clicks.first().filter(|c| c.support != *pos) else { return Ok(()) };
+    let name = split_state(state).0;
+    match w.blocks.get(&cell(c.support)) {
+        Some(s) if rules::slab_merges(&name, s, c.face, c.cursor.1) => {
+            Err(format!("the click merges into the slab at {:?} instead of placing at {pos:?}", c.support))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Run the whole plan and compare the final world with the schematic placed at the plan origin.
 pub fn simulate(plan: &Plan, schem: &Schematic) -> Result<SimReport, SimError> {
     let o = plan.header.origin;
@@ -292,7 +305,8 @@ pub fn simulate(plan: &Plan, schem: &Schematic) -> Result<SimReport, SimError> {
     }
     let mut rep = SimReport::default();
     for (i, st) in plan.steps.iter().enumerate() {
-        apply(&mut w, st).map_err(|msg| SimError { step: i, msg: format!("{st}: {msg}") })?;
+        // not part of `apply`: the executor must still replay plans written before this rule
+        merge_check(&w, st).and_then(|()| apply(&mut w, st)).map_err(|msg| SimError { step: i, msg: format!("{st}: {msg}") })?;
         match st {
             Step::Move(_) => rep.moves += 1,
             Step::Pillar(_) => rep.pillars += 1,

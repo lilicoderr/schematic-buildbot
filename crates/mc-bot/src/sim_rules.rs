@@ -118,6 +118,22 @@ pub fn needs_support(name: &str, props: &Props, pos: BlockPos) -> Option<BlockPo
     (falls || sits).then(|| pos.below())
 }
 
+/// Would a slab clicked on `face` of the slab `support` (full state) join it into a double slab
+/// instead of filling the cell next to it? (docs/RE/block_states.md: slab replacement.)
+pub fn slab_merges(name: &str, support: &str, face: Face, cursor_y: f32) -> bool {
+    let (other, kind) = support.split_once('[').unwrap_or((support, ""));
+    let bare = |n: &str| n.trim_start_matches("minecraft:").to_string();
+    if !name.ends_with("_slab") || bare(other) != bare(name) || kind.contains("type=double") {
+        return false;
+    }
+    let side = !matches!(face, Face::Up | Face::Down);
+    if kind.contains("type=top") {
+        face == Face::Down || (side && cursor_y <= 0.5)
+    } else {
+        face == Face::Up || (side && cursor_y > 0.5)
+    }
+}
+
 /// Where the second half appears when this block is placed, if it has one.
 pub fn second_half(name: &str, props: &Props, pos: BlockPos) -> Option<BlockPos> {
     let tall = matches!(name, "tall_grass" | "large_fern" | "sunflower" | "lilac" | "rose_bush" | "peony");
