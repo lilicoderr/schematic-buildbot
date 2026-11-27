@@ -69,24 +69,28 @@ pub fn repair(bot: &mut PlayClient, world: &World, sent: &Sent, off: Offset, say
     site.finish(bot)?;
     bot.idle(std::time::Duration::from_millis(300))?;
     // back to where the plan expects us
-    if feet_cell(bot.feet) != plan_feet {
-        return_to(bot, world, off, say)?;
+    if feet_cell(bot.feet) != plan_feet && !return_to(bot, world, off, say)? {
+        return Err(io::Error::other("repair: cannot get back to the planned position on the ground"));
     }
     Ok(todo.len())
 }
 
 /// Walk (ground only) to the feet cell the plan expects, over the blocks built so far.
-pub fn return_to(bot: &mut PlayClient, world: &World, off: Offset, say: &mut dyn FnMut(&str)) -> io::Result<()> {
+/// False means the bot is not there; walking on with plan coordinates would cross thin air.
+pub fn return_to(bot: &mut PlayClient, world: &World, off: Offset, say: &mut dyn FnMut(&str)) -> io::Result<bool> {
     let goal = off.cell(world.feet);
     let here = feet_cell(bot.feet);
     if here == goal {
-        return Ok(());
+        return Ok(true);
     }
     match terrain_of(world, off).route(here, &|c| c == goal, 120, 400_000) {
-        Some(route) => bot.walk_cells(&route),
+        Some(route) => {
+            bot.walk_cells(&route)?;
+            Ok(feet_cell(bot.feet) == goal)
+        }
         None => {
             say("no ground route back to the planned position");
-            Ok(())
+            Ok(false)
         }
     }
 }

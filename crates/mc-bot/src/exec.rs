@@ -82,7 +82,11 @@ pub fn run(
     }
     if first > 0 {
         rep.steps_done = first;
-        exec_repair::return_to(bot, &world, off, say)?;
+        if !exec_repair::return_to(bot, &world, off, say)? {
+            rep.aborted = Some(format!("resume: no ground route to the position of step {first}"));
+            rep.elapsed = started.elapsed();
+            return Ok(rep);
+        }
     }
     // level moves collected so the bot walks them in one go
     let mut level: Vec<Cell> = Vec::new();
@@ -107,6 +111,7 @@ pub fn run(
             Step::Auto { .. } => 3,
         };
         let t_step = Instant::now();
+        let teleports = bot.teleports;
         match st {
             Step::Move(c) => {
                 if c.1 == before.1 {
@@ -154,6 +159,19 @@ pub fn run(
                 let fixed = exec_repair::repair(bot, &world, &sent, off, say)?;
                 rep.repaired += fixed;
                 say(&format!("checkpoint {n}: {} blocks expected, {} re-placed", world.built().0, fixed));
+            }
+        }
+        if bot.kicked.is_some() {
+            // the step may be half done: do not record it as finished
+            break;
+        }
+        // The server moved us: replaying on from the planned cell would walk through the air.
+        if bot.teleports != teleports && level.is_empty() {
+            bot.idle(Duration::from_millis(100))?;
+            say(&format!("step {}: the server moved the player, walking back", i + 1));
+            if !exec_repair::return_to(bot, &world, off, say)? {
+                rep.aborted = Some(format!("step {}: lost the planned position after a server teleport", i + 1));
+                break;
             }
         }
         rep.spent[kind] += t_step.elapsed().as_secs_f64();

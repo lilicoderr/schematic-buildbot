@@ -110,6 +110,10 @@ impl PlayClient {
                 break;
             }
         }
+        // without a position from the server nothing may be sent that claims one
+        if client.teleports == 0 && client.kicked.is_none() {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "the server sent no player position within 10 s"));
+        }
         Ok((client, join))
     }
 
@@ -227,7 +231,8 @@ impl PlayClient {
             }
         }
         let now = Instant::now();
-        self.next_tick = if now > self.next_tick + TICK * 4 { now + TICK } else { self.next_tick + TICK };
+        // after a pause start over: catching up would send several moves in one server tick
+        self.next_tick = if now > self.next_tick + TICK / 2 { now + TICK } else { self.next_tick + TICK };
         Ok(())
     }
 
@@ -327,20 +332,26 @@ impl PlayClient {
 
     /// Jump straight up the vanilla arc, glide over the edge at jump height, land on `target`.
     fn jump_to(&mut self, target: Vec3) -> io::Result<()> {
-        let base = self.feet.y;
+        let (base, teleports) = (self.feet.y, self.teleports);
         for rise in JUMP_ARC {
+            if self.teleports != teleports {
+                return Ok(());
+            }
             self.feet.y = base + rise;
             self.send_pos(false)?;
             self.tick()?;
         }
         let hold = Vec3::new(target.x, self.feet.y, target.z);
         for _ in 0..40 {
-            if self.feet.horiz_dist(hold) <= 0.05 || self.kicked.is_some() {
+            if self.feet.horiz_dist(hold) <= 0.05 || self.kicked.is_some() || self.teleports != teleports {
                 break;
             }
             self.feet = walk_step(self.feet, hold);
             self.send_pos(false)?;
             self.tick()?;
+        }
+        if self.teleports != teleports {
+            return Ok(()); // the server's position wins
         }
         self.feet = target;
         self.send_pos(true)?;
@@ -349,19 +360,23 @@ impl PlayClient {
 
     /// Step off an edge toward `target` (lower than we are) and fall onto it.
     fn drop_to(&mut self, target: Vec3) -> io::Result<()> {
+        let teleports = self.teleports;
         let level = Vec3::new(target.x, self.feet.y, target.z);
         for _ in 0..40 {
-            if self.feet.horiz_dist(level) <= 0.05 || self.kicked.is_some() {
+            if self.feet.horiz_dist(level) <= 0.05 || self.kicked.is_some() || self.teleports != teleports {
                 break;
             }
             self.feet = walk_step(self.feet, level);
             self.send_pos(self.feet.horiz_dist(level) > 0.3)?;
             self.tick()?;
         }
-        while self.feet.y > target.y + 1e-9 && self.kicked.is_none() {
+        while self.feet.y > target.y + 1e-9 && self.kicked.is_none() && self.teleports == teleports {
             self.feet.y = (self.feet.y - FALL_STEP).max(target.y);
             self.send_pos(false)?;
             self.tick()?;
+        }
+        if self.teleports != teleports {
+            return Ok(()); // the server's position wins
         }
         self.feet = target;
         self.send_pos(true)?;
@@ -394,8 +409,14 @@ impl PlayClient {
             // Feet are now above the cell to fill: click the top face of the block below it.
             self.pitch = 90.0;
             self.send_pos_look(false)?;
+            let cell = BlockPos::new(base.0, y, base.2);
+            self.blocks.forget(cell);
             self.use_item_on(floor, Face::Up, (0.5, 1.0, 0.5))?;
             self.idle(self.place_delay)?;
+            if !self.wait_confirmed(cell, Duration::from_secs(2))? {
+                self.fall_to(y as f64)?;
+                return Err(io::Error::other(format!("pillar block {cell:?} was not accepted; standing on it would be hovering")));
+            }
             self.feet.y = (y + 1) as f64;
             self.send_pos_look(true)?;
             self.tick()?;
@@ -404,6 +425,15 @@ impl PlayClient {
             }
         }
         Ok(())
+    }
+
+    /// Wait until the server reports a block at `pos`; false after `limit` (or a kick).
+    fn wait_confirmed(&mut self, pos: BlockPos, limit: Duration) -> io::Result<bool> {
+        let end = Instant::now() + limit;
+        while !self.blocks.is_confirmed(pos) && self.kicked.is_none() && Instant::now() < end {
+            self.pump_once()?;
+        }
+        Ok(self.blocks.is_confirmed(pos) || self.kicked.is_some())
     }
 
     /// Break one block (creative mode: instantly) at `pos`.

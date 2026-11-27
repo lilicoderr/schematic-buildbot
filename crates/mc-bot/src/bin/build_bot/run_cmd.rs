@@ -50,12 +50,9 @@ pub fn run_cmd(args: &[String]) {
         println!("{}", tr!("resuming after step {}", "{}단계 다음부터 이어서 실행", opts.from_step));
     }
     let mut say = |m: &str| eprintln!("  {m}");
-    let mut last_saved = 0;
+    // saved after every step: replaying already finished moves or breaks would walk over air
     let mut on_step = |done: usize, off: Offset| {
-        if done >= last_saved + 25 {
-            last_saved = done;
-            let _ = run_state::save(&progress, fingerprint, done, off);
-        }
+        let _ = run_state::save(&progress, fingerprint, done, off);
     };
     let r = exec::run(&mut bot, &plan, &opts, &mut say, &mut on_step).unwrap_or_else(|e| fail(e.to_string()));
     report(&plan, &r, bot.teleports);
