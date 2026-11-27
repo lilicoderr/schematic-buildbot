@@ -39,6 +39,9 @@ pub struct Terrain {
     reserved: HashSet<Cell>,
     /// Standing cells the planner must not pick right now (they would seal the bot in).
     pub avoid: HashSet<Cell>,
+    /// Highest cell row the blueprint reaches; a standing cell with nothing solid above it up to
+    /// here sees the open sky (the bot can always pillar out of it).
+    pub sky_top: i32,
 }
 
 impl Terrain {
@@ -146,7 +149,7 @@ impl Terrain {
     /// With a block added at `extra`, can a player standing at `from` still walk (jump, drop) to
     /// open ground? False means the area is a pocket of fewer than `cap` cells: placing there
     /// would seal the player in. Searches at most `cap` cells, so a huge open area counts as open.
-    pub fn sealed_in(&mut self, from: Cell, extra: Cell, outside: &dyn Fn(Cell) -> bool, cap: usize) -> bool {
+    pub fn sealed_in(&mut self, from: Cell, extra: Cell, cap: usize) -> bool {
         let had = self.body.contains(&extra);
         if !had {
             self.add_block(extra, false);
@@ -155,7 +158,7 @@ impl Terrain {
         let mut queue = VecDeque::from([from]);
         let mut open = false;
         while let Some(cur) = queue.pop_front() {
-            if outside(cur) || seen.len() >= cap {
+            if self.sky_open(cur) || seen.len() >= cap {
                 open = true;
                 break;
             }
@@ -169,6 +172,11 @@ impl Terrain {
             self.remove_block(extra);
         }
         !open
+    }
+
+    /// Nothing solid above the standing cell up to the top of the blueprint.
+    pub fn sky_open(&self, c: Cell) -> bool {
+        (c.1 + 2..=self.sky_top).all(|y| !self.solid((c.0, y, c.2)))
     }
 
     /// How many cells a walk from `start` can reach (diagnostics and tests).

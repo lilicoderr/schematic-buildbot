@@ -14,7 +14,7 @@ use std::io;
 use std::time::{Duration, Instant};
 
 /// Tallest pillar planned in one go.
-pub const MAX_HEIGHT: i32 = 6;
+pub const MAX_HEIGHT: i32 = 24;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pillar {

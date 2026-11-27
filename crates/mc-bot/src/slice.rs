@@ -74,7 +74,7 @@ fn click_steps(plan: &placement::Plan) -> Vec<ClickStep> {
 
 /// Cut `schem` into a plan for flat ground whose top is below `origin.1`.
 pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Result<Plan, String> {
-    let (order, _) = schem.plan_order();
+    let order = crate::tour::tour_order(schem);
     let start = (origin.0 - 2, origin.1, origin.2 - 2);
     let at = |b: &Block| BlockPos::new(origin.0 + b.pos.x, origin.1 + b.pos.y, origin.2 + b.pos.z);
     let positions: Vec<BlockPos> = order.iter().map(|b| at(b)).collect();
@@ -85,9 +85,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     let mut unreachable: Vec<(BlockPos, String)> = Vec::new();
     let mut deviations = 0usize;
 
-    let (fx0, fx1) = (positions.iter().map(|p| p.x).min().unwrap_or(0) - 1, positions.iter().map(|p| p.x).max().unwrap_or(0) + 1);
-    let (fz0, fz1) = (positions.iter().map(|p| p.z).min().unwrap_or(0) - 1, positions.iter().map(|p| p.z).max().unwrap_or(0) + 1);
-    let outside = |c: Cell| c.1 == origin.1 && (c.0 < fx0 || c.0 > fx1 || c.2 < fz0 || c.2 > fz1);
+    site.terrain.sky_top = positions.iter().map(|p| p.y).max().unwrap_or(origin.1) + 1;
     let mut todo: Vec<usize> = (0..order.len()).collect();
     let mut last_pass = false;
     loop {
@@ -132,7 +130,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
         // Never seal the bot into a pocket it cannot leave: pick another standing cell, or put the
         // block off until the end.
         let (mut here, mut tries) = (here, 0);
-        while site.terrain.sealed_in(here, (world.x, world.y, world.z), &outside, SEAL_CAP) {
+        while site.terrain.sealed_in(here, (world.x, world.y, world.z), SEAL_CAP) {
             tries += 1;
             if tries > if last_pass { 12 } else { 6 } {
                 break;
@@ -145,7 +143,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             }
         }
         site.terrain.avoid.clear();
-        let sealed = site.terrain.sealed_in(here, (world.x, world.y, world.z), &outside, SEAL_CAP);
+        let sealed = site.terrain.sealed_in(here, (world.x, world.y, world.z), SEAL_CAP);
         if !last_pass && sealed {
             deferred.push(i);
             continue;
