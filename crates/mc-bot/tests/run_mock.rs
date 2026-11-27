@@ -118,7 +118,7 @@ fn replays_a_plan_and_repairs_a_placement_the_server_dropped() {
 
     let (mut bot, _) = PlayClient::join_v(&format!("127.0.0.1:{port}"), "127.0.0.1", port, "Mock", 767).unwrap();
     bot.place_delay = std::time::Duration::from_millis(5);
-    let opts = Opts { verify: true, from_step: 0, offset: None };
+    let opts = Opts { verify: true, from_step: 0, offset: None, extras_file: None, refit: Vec::new() };
     let mut log = Vec::new();
     let mut steps_seen = 0;
     let report = exec::run(&mut bot, &plan, &opts, &mut |m| log.push(m.to_string()), &mut |n, _| steps_seen = n).unwrap();

@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 
 #[path = "cleanup.rs"]
 mod cleanup;
+#[path = "way_back.rs"]
+mod way_back;
 
 /// Node budget of one scaffold-navigation search.
 const SEARCH_NODES: usize = 60_000;

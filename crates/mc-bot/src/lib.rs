@@ -9,6 +9,7 @@ pub mod data;
 pub mod derive;
 pub mod exec;
 pub mod exec_repair;
+pub mod extras;
 pub mod guard;
 pub mod i18n;
 pub mod ids;

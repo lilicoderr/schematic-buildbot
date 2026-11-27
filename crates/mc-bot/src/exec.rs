@@ -8,6 +8,7 @@
 use crate::blocks;
 use crate::builder::PlayClient;
 use crate::exec_repair::{self, Offset};
+use crate::extras::{self, Extras};
 use crate::nav::{cell_feet, feet_cell, Cell};
 use crate::placement::{Click, Plan as Placement};
 use crate::plan::{Plan, Step};
@@ -48,6 +49,10 @@ pub struct Opts {
     pub from_step: usize,
     /// Plan-to-world translation of the run being resumed (otherwise taken from where we stand).
     pub offset: Option<Offset>,
+    /// Where to remember scaffold built outside the plan (read again when resuming).
+    pub extras_file: Option<std::path::PathBuf>,
+    /// Plan positions to break and place again after the last step (blocks known to be wrong).
+    pub refit: Vec<BlockPos>,
 }
 
 /// What a placement step needs to be repeated later: item id and click plan (world coordinates).
@@ -80,6 +85,56 @@ fn state_diffs(bot: &PlayClient, world: &World, sent: &Sent, off: Offset) -> Vec
     out
 }
 
+/// Break each of `list` (plan coordinates) and place it again as the plan's last step for that
+/// position says. Unconfirmed results are left to the checkpoint repair that follows.
+#[allow(clippy::too_many_arguments)]
+fn refit(
+    bot: &mut PlayClient,
+    plan: &Plan,
+    world: &World,
+    sent: &mut Sent,
+    off: Offset,
+    list: &[BlockPos],
+    extras: &mut Extras,
+    say: &mut dyn FnMut(&str),
+) -> io::Result<()> {
+    if list.is_empty() {
+        return Ok(());
+    }
+    let mut site = exec_repair::site_of(world, off, extras);
+    for want in list {
+        let found = plan.steps.iter().rev().find_map(|st| match st {
+            Step::Place { pos, state, yaw, clicks } if pos == want => Some((state, yaw, clicks)),
+            _ => None,
+        });
+        let Some((state, yaw, clicks)) = found else {
+            say(&format!("refit: the plan places nothing at {want:?}"));
+            continue;
+        };
+        let (at, item) = (off.pos(*want), blocks::item_id(&split_state(state).0).unwrap_or(1));
+        let pl = to_placement(state, clicks, *yaw, off);
+        // never stand on the block that is about to be broken
+        site.terrain.avoid.insert((at.x, at.y + 1, at.z));
+        site.approach(bot, std::slice::from_ref(&at))?;
+        if crate::world::within_reach(bot.feet, at) {
+            say(&format!("refit: breaking and placing {at:?} {state}"));
+            bot.break_block(at)?;
+            bot.idle(Duration::from_millis(300))?;
+            bot.blocks.forget(at);
+            bot.place(at, item, &pl)?;
+            sent.insert(at, (item, pl));
+            bot.idle(Duration::from_millis(300))?;
+        } else {
+            say(&format!("refit: no way to {at:?}"));
+        }
+        site.terrain.avoid.clear();
+    }
+    site.finish(bot)?;
+    extras.set(site.standing());
+    exec_repair::return_to(bot, world, off, extras, say)?;
+    Ok(())
+}
+
 pub fn run(
     bot: &mut PlayClient,
     plan: &Plan,
@@ -96,12 +151,13 @@ pub fn run(
     let scaffold_item = blocks::item_id("cobblestone").unwrap_or(1);
 
     let first = opts.from_step.min(plan.steps.len());
+    let mut extras = Extras::open(opts.extras_file.clone(), first > 0);
     for (i, st) in plan.steps[..first].iter().enumerate() {
         sim::apply(&mut world, st).map_err(|m| io::Error::other(format!("step {}: {m}", i + 1)))?;
     }
     if first > 0 {
         rep.steps_done = first;
-        if !exec_repair::return_to(bot, &world, off, say)? {
+        if !exec_repair::return_to(bot, &world, off, &mut extras, say)? {
             rep.aborted = Some(format!("resume: no ground route to the position of step {first}"));
             rep.elapsed = started.elapsed();
             return Ok(rep);
@@ -129,6 +185,13 @@ pub fn run(
             Step::Checkpoint { .. } => 5,
             Step::Auto { .. } => 3,
         };
+        if !extras.cells.is_empty() {
+            let needed = extras::needed(st, before, world.feet, off);
+            if extras.hits(&needed) {
+                bot.walk_level(&std::mem::take(&mut level))?;
+                extras.clear(bot, &needed)?;
+            }
+        }
         let t_step = Instant::now();
         let teleports = bot.teleports;
         match st {
@@ -175,7 +238,7 @@ pub fn run(
             Step::Checkpoint { n, .. } => {
                 rep.checkpoints += 1;
                 bot.idle(Duration::from_millis(300))?;
-                let fixed = exec_repair::repair(bot, &world, &sent, off, say)?;
+                let fixed = exec_repair::repair(bot, &world, &sent, off, &mut extras, say)?;
                 rep.repaired += fixed;
                 say(&format!("checkpoint {n}: {} blocks expected, {} re-placed", world.built().0, fixed));
             }
@@ -191,11 +254,11 @@ pub fn run(
             rep.resyncs += 1;
             bot.idle(Duration::from_millis(500))?;
             say(&format!("step {}: the server moved the player, walking back", i + 1));
-            if !exec_repair::return_to(bot, &world, off, say)? {
+            if !exec_repair::return_to(bot, &world, off, &mut extras, say)? {
                 rep.aborted = Some(format!("step {}: lost the planned position after a server teleport", i + 1));
                 break;
             }
-            rep.repaired += exec_repair::repair(bot, &world, &sent, off, say)?;
+            rep.repaired += exec_repair::repair(bot, &world, &sent, off, &mut extras, say)?;
         }
         rep.spent[kind] += t_step.elapsed().as_secs_f64();
         rep.counts[kind] += 1;
@@ -205,8 +268,20 @@ pub fn run(
         }
     }
     bot.idle(Duration::from_millis(500))?;
+    let complete = rep.steps_done == plan.steps.len() && rep.aborted.is_none() && bot.kicked.is_none();
+    if complete {
+        refit(bot, plan, &world, &mut sent, off, &opts.refit, &mut extras, say)?;
+    }
     if opts.verify && rep.aborted.is_none() && bot.kicked.is_none() {
-        rep.repaired += exec_repair::repair(bot, &world, &sent, off, say)?;
+        rep.repaired += exec_repair::repair(bot, &world, &sent, off, &mut extras, say)?;
+    }
+    if complete && !extras.cells.is_empty() {
+        say(&format!("taking down {} blocks of extra scaffold", extras.cells.len()));
+        let mut site = exec_repair::site_of(&world, off, &extras);
+        site.finish(bot)?;
+        extras.set(site.standing());
+        say(&format!("extra scaffold left standing: {:?}", extras.cells));
+        bot.idle(Duration::from_millis(300))?;
     }
     rep.missing = exec_repair::missing(bot, &world, &sent, off);
     rep.differs = state_diffs(bot, &world, &sent, off);

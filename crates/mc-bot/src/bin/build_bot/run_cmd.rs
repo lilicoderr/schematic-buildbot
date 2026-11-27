@@ -7,10 +7,12 @@ use mc_bot::exec_repair::Offset;
 use mc_bot::plan::{Plan, Step};
 use mc_bot::run_state;
 use mc_bot::tr;
+use mc_bot::world::BlockPos;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// `run <plan> [host:port] [--name N] [--rate R | --delay-ms N] [--walk] [--verify] [--resume]`
+/// `run <plan> [host:port] [--name N] [--rate R | --delay-ms N] [--walk] [--verify] [--resume]
+/// [--refit x,y,z;...]`
 pub fn run_cmd(args: &[String]) {
     let Some(path) = args.first() else { fail(tr!("usage: run <plan.bbplan> [host:port]", "사용법: run <plan.bbplan> [host:port]")) };
     let plan = read_plan(path);
@@ -45,6 +47,8 @@ pub fn run_cmd(args: &[String]) {
         verify: args.iter().any(|a| a == "--verify"),
         from_step: resume.as_ref().map_or(0, |r| r.step),
         offset: resume.map(|r| r.offset),
+        extras_file: Some(PathBuf::from(format!("{}.extras", progress.display()))),
+        refit: flag(args, "--refit").map(|s| parse_cells(&s)).unwrap_or_default(),
     };
     if opts.from_step > 0 {
         println!("{}", tr!("resuming after step {}", "{}단계 다음부터 이어서 실행", opts.from_step));
@@ -59,6 +63,19 @@ pub fn run_cmd(args: &[String]) {
     if r.steps_done == plan.steps.len() {
         let _ = std::fs::remove_file(&progress);
     }
+}
+
+/// `x,y,z;x,y,z` in plan coordinates.
+fn parse_cells(list: &str) -> Vec<BlockPos> {
+    list.split(';')
+        .map(|c| {
+            let v: Vec<i32> = c.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+            if v.len() != 3 {
+                fail(tr!("--refit wants x,y,z;x,y,z", "--refit 형식: x,y,z;x,y,z"));
+            }
+            BlockPos::new(v[0], v[1], v[2])
+        })
+        .collect()
 }
 
 fn report(plan: &Plan, r: &Report, teleports: u32) {
