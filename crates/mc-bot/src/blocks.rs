@@ -1,9 +1,30 @@
 //! 1.21.1 item registry (all of minecraft-data items.json, generated).
 //! Block name → item id, used to put a blueprint block in hand before placing it.
 
+/// Name of the item that places `block` (wall variants use the standing item;
+/// docs/RE/placement.md 5.1).
+fn item_name(block: &str) -> std::borrow::Cow<'_, str> {
+    match block {
+        "redstone_wire" => "redstone".into(),
+        "tripwire" => "string".into(),
+        "wall_torch" => "torch".into(),
+        "soul_wall_torch" => "soul_torch".into(),
+        "redstone_wall_torch" => "redstone_torch".into(),
+        _ => {
+            for kind in ["hanging_sign", "sign", "banner", "head", "skull", "fan"] {
+                if let Some(stem) = block.strip_suffix(kind).and_then(|s| s.strip_suffix("wall_")) {
+                    return format!("{stem}{kind}").into();
+                }
+            }
+            block.into()
+        }
+    }
+}
+
 /// Item/block name (without the `minecraft:` prefix) → numeric id, or None if unknown.
 pub fn item_id(name: &str) -> Option<i32> {
     let key = name.strip_prefix("minecraft:").unwrap_or(name);
+    let key = &*item_name(key);
     Some(match key {
         "air" => 0,
         "stone" => 1,

@@ -510,6 +510,16 @@ impl PlayClient {
         self.conn.send(ids::SB_PLAY_SWING_ARM, s.as_slice())
     }
 
+    /// player_command press / release shift (docs/RE/protocol.md); the pose follows next tick.
+    fn set_sneak(&mut self, on: bool) -> io::Result<()> {
+        let mut b = PacketBuf::new();
+        b.write_varint(self.entity_id);
+        b.write_varint(i32::from(!on));
+        b.write_varint(0);
+        self.conn.send(ids::SB_PLAY_PLAYER_COMMAND, b.as_slice())?;
+        self.idle(Duration::from_millis(60))
+    }
+
     /// Try to place `item_id` at `pos` following `plan` (click faces, cursor, yaw).
     /// Returns `Ok(false)` (not an error) when the position is out of reach.
     pub fn place(&mut self, pos: BlockPos, item_id: i32, plan: &Plan) -> io::Result<bool> {
@@ -520,15 +530,21 @@ impl PlayClient {
         let eye = Vec3::new(self.feet.x, self.feet.y + EYE_HEIGHT, self.feet.z);
         let (look_yaw, pitch) = look_at(eye, pos.center());
         self.yaw = plan.yaw.unwrap_or(look_yaw);
-        self.pitch = pitch;
+        self.pitch = plan.pitch.unwrap_or(pitch);
         self.set_creative_held(item_id)?;
         self.send_pos_look(true)?;
+        if plan.sneak {
+            self.set_sneak(true)?;
+        }
         for click in &plan.clicks {
             self.use_item_on(click.support, click.face, click.cursor)?;
             self.idle(self.place_delay)?;
             if self.kicked.is_some() {
                 break;
             }
+        }
+        if plan.sneak {
+            self.set_sneak(false)?;
         }
         Ok(true)
     }

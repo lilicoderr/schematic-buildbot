@@ -11,7 +11,7 @@ use crate::exec_repair::{self, Offset};
 use crate::nav::{cell_feet, feet_cell, Cell};
 use crate::placement::{Click, Plan as Placement};
 use crate::plan::{Plan, Step};
-use crate::schematic::split_state;
+use crate::schematic::{split_state, Block};
 use crate::sim::{self, World};
 use crate::world::BlockPos;
 use std::collections::HashMap;
@@ -48,10 +48,15 @@ pub struct Opts {
 /// What a placement step needs to be repeated later: item id and click plan (world coordinates).
 pub type Sent = HashMap<BlockPos, (i32, Placement)>;
 
-fn to_placement(clicks: &[crate::plan::ClickStep], yaw: Option<f32>, off: Offset) -> Placement {
+/// Pitch and sneak are not stored in the plan: they follow from the wanted state alone.
+fn to_placement(state: &str, clicks: &[crate::plan::ClickStep], yaw: Option<f32>, off: Offset) -> Placement {
+    let block = Block::from_state(BlockPos::new(0, 0, 0), state);
     Placement {
         clicks: clicks.iter().map(|c| Click { support: off.pos(c.support), face: c.face, cursor: c.cursor }).collect(),
         yaw,
+        pitch: crate::orient::look(&block).1,
+        sneak: crate::orient::needs_sneak(&block),
+        missing_support: None,
         unhonoured: Vec::new(),
     }
 }
@@ -121,7 +126,7 @@ pub fn run(
             }
             Step::Place { pos, state, yaw, clicks } => {
                 let item = blocks::item_id(&split_state(state).0).unwrap_or(1);
-                let pl = to_placement(clicks, *yaw, off);
+                let pl = to_placement(state, clicks, *yaw, off);
                 let at = off.pos(*pos);
                 if bot.place(at, item, &pl)? {
                     rep.placed += 1;

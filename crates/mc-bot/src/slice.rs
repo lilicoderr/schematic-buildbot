@@ -7,6 +7,7 @@
 
 use crate::blocks;
 use crate::guard::Budget;
+use crate::orient;
 use crate::nav::{blocks_cell, cell_feet, feet_cell, Cell, Terrain};
 use crate::placement::{self, Action};
 use crate::plan::{block_hash, ClickStep, Header, Plan, Step};
@@ -15,7 +16,7 @@ use crate::schematic::{Block, Schematic};
 use crate::sim;
 use crate::support;
 use crate::world::{within_reach, BlockPos, Vec3};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 
 /// Upcoming blocks considered when choosing where to stand (offline, so generous).
@@ -127,6 +128,8 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     let mut placed: HashSet<BlockPos> = HashSet::new();
     // placed blocks a plain click would open: never clicked against
     let mut usable: HashSet<BlockPos> = HashSet::new();
+    // placed slabs, so a click never merges into its support by accident
+    let mut slabs: HashMap<BlockPos, Block> = HashMap::new();
     let (mut count, mut hash, mut since_cp, mut cp_n) = (0u32, 0u64, 0usize, 0u32);
     let mut unreachable: Vec<(BlockPos, String)> = Vec::new();
     let mut deviations = 0usize;
@@ -215,10 +218,22 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
         // Click only against blocks that are really within the server's click reach (docs/RE/placement.md).
         let feet_now = rec.feet;
         let near = |p: BlockPos| solid(p) && !usable.contains(&p) && crate::world::eye_to_box(feet_now, p) <= crate::world::CLICK_REACH;
-        let mut pl = match placement::plan(&Block { pos: world, ..(*b).clone() }, near) {
+        let safe = |c: &placement::Click| {
+            !slabs.get(&c.support).is_some_and(|s| orient::merges_into(s, &b.name, c.face, c.cursor.1))
+        };
+        let mut pl = match placement::plan_clicks(&Block { pos: world, ..(*b).clone() }, |c| near(c.support) && safe(c)) {
             Action::Place(p) => p,
             Action::Skip(_) => pl,
         };
+        if pl.missing_support.is_some() {
+            // attached block whose support is not there yet: scaffold would pop it off later
+            if last_pass {
+                unreachable.push((world, format!("{}/no_support", b.name)));
+            } else {
+                deferred.push(i);
+            }
+            continue;
+        }
         let mut chain: Vec<support::Link> = Vec::new();
         if pl.clicks.iter().any(|c| !near(c.support) && c.support != world) {
             let cellp = |p: BlockPos| (p.x, p.y, p.z);
@@ -236,7 +251,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             }
             let cells: HashSet<BlockPos> = chain.iter().map(|l| l.pos).collect();
             let with_chain = |p: BlockPos| near(p) || cells.contains(&p);
-            match placement::plan(&Block { pos: world, ..(*b).clone() }, with_chain) {
+            match placement::plan_clicks(&Block { pos: world, ..(*b).clone() }, |c| with_chain(c.support) && safe(c)) {
                 Action::Place(p2) if p2.clicks.iter().all(|c| with_chain(c.support) || c.support == world) => pl = p2,
                 _ => {
                     unreachable.push((world, format!("{}/no_support", b.name)));
@@ -258,6 +273,9 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             site.finish(&mut rec).map_err(|e| e.to_string())?;
         }
         placed.insert(world);
+        if b.name.ends_with("_slab") {
+            slabs.insert(world, Block { pos: world, ..(*b).clone() });
+        }
         site.terrain.add_block((world.x, world.y, world.z), crate::nav::is_standable_surface(&b.name, b.prop("type")));
         if placement::is_usable(&b.name) {
             usable.insert(world);
@@ -308,6 +326,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     plan.header.unreachable = unreachable;
     crate::slice_stats::fill(&mut plan, schem.blocks.len(), deviations);
     plan.header.stats.push(("state_neighbour_derived".into(), crate::slice_stats::neighbour_derived(schem).to_string()));
+    crate::slice_stats::fill_mismatches(&mut plan);
     let t_sim = std::time::Instant::now();
     let sim_result = sim::simulate(&plan, schem);
     add(|_| {}, t_sim, |t| &mut t.simulate);

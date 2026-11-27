@@ -142,8 +142,11 @@ fn place(w: &mut World, pos: BlockPos, state: &str, clicks: &[crate::plan::Click
     if clicks.is_empty() {
         return Err("no clicks".into());
     }
-    for c in clicks {
-        click_ok(w, pos, c.support, c.face)?;
+    for (i, c) in clicks.iter().enumerate() {
+        // later clicks may target the block the first click created (double slab, candles)
+        if !(i > 0 && c.support == pos) {
+            click_ok(w, pos, c.support, c.face)?;
+        }
         if eye_to_box(cell_feet(w.feet), c.support) > CLICK_REACH {
             return Err(format!("click support {:?} out of reach", c.support));
         }

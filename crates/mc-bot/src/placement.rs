@@ -4,18 +4,12 @@
 //! face, the cursor position inside that face, and the player's horizontal facing.
 //! This module turns a wanted state into one or more clicks plus a yaw.
 //!
-//! Supported (verified against the vanilla placement rules, not yet against every server):
-//!
-//! | family                                   | state       | how                                   |
-//! |------------------------------------------|-------------|---------------------------------------|
-//! | stairs, doors, fence gates, beds         | `facing`    | player looks along `facing`           |
-//! | furnaces, chests, carved pumpkins, ...   | `facing`    | player looks opposite of `facing`     |
-//! | stairs                                   | `half`      | click upper/lower half or the top face|
-//! | slabs                                    | `type`      | top/bottom like stairs; double = 2 clicks |
-//! | logs, pillars, bone/hay blocks, ...      | `axis`      | click a face perpendicular to the axis|
-//!
-//! Everything else is placed in its default state and reported as "unhonoured".
+//! The per-family rules (which face, cursor, rotation and sneaking) live in [`crate::orient`];
+//! this module picks, among the supports that exist, a click satisfying them. What cannot be
+//! honoured is reported in [`Plan::unhonoured`]; neighbour-derived states (stair shape,
+//! connections, chest side, forced door hinges) are predicted by [`crate::derive`].
 
+use crate::orient::{self, Rule};
 use crate::schematic::Block;
 use crate::world::{BlockPos, Face};
 
@@ -32,6 +26,13 @@ pub struct Plan {
     pub clicks: Vec<Click>,
     /// Horizontal facing (degrees) the player must have while clicking, if the state needs one.
     pub yaw: Option<f32>,
+    /// Pitch the player must have (only 6-way blocks: observer, dispenser, piston, barrel ...).
+    pub pitch: Option<f32>,
+    /// Hold sneak while clicking.
+    pub sneak: bool,
+    /// Set when an attached block's only valid support is not (yet) there: do not substitute
+    /// scaffold, place it later or report it.
+    pub missing_support: Option<BlockPos>,
     /// State properties that could not be honoured and fall back to the default.
     pub unhonoured: Vec<String>,
 }
@@ -42,10 +43,6 @@ pub enum Action {
     /// Nothing to click: the block appears as part of another one (e.g. the upper half of a door).
     Skip(&'static str),
 }
-
-/// Properties that change how a block looks or works when placed; if present and not
-/// honoured we report them. (Connection/shape properties are derived by the server.)
-const ORIENTATION_PROPS: &[&str] = &["facing", "half", "type", "axis", "hinge", "part", "face", "attachment", "orientation"];
 
 /// Blocks that react to a plain right click (docs/RE/placement.md section 2.7c): clicking one
 /// without sneaking opens or toggles it instead of placing, so it is never used as click support.
@@ -64,40 +61,6 @@ pub fn is_usable(name: &str) -> bool {
         || EXACT.contains(&name)
 }
 
-fn is_same_as_player(name: &str) -> bool {
-    name.ends_with("_stairs")
-        || (name.ends_with("_door") && !name.ends_with("trapdoor"))
-        || name.ends_with("_fence_gate")
-        || name.ends_with("_bed")
-}
-
-fn is_opposite_of_player(name: &str) -> bool {
-    matches!(
-        name,
-        "furnace"
-            | "blast_furnace"
-            | "smoker"
-            | "chest"
-            | "trapped_chest"
-            | "ender_chest"
-            | "carved_pumpkin"
-            | "jack_o_lantern"
-            | "stonecutter"
-            | "lectern"
-            | "loom"
-            | "repeater"
-            | "comparator"
-    ) || name.ends_with("_glazed_terracotta")
-}
-
-fn is_slab(name: &str) -> bool {
-    name.ends_with("_slab")
-}
-
-fn is_stairs(name: &str) -> bool {
-    name.ends_with("_stairs")
-}
-
 /// Blocks whose second half is created together with the first one.
 fn second_half_is_automatic(block: &Block) -> bool {
     let upper = block.prop("half") == Some("upper") && (block.name.ends_with("_door") || is_tall_plant(&block.name));
@@ -112,152 +75,106 @@ fn is_tall_plant(name: &str) -> bool {
     )
 }
 
+/// Properties that change how a block looks or works when placed; if present and not
+/// honoured we report them. (Connection/shape properties are derived by the server.)
+const ORIENTATION_PROPS: &[&str] =
+    &["facing", "half", "type", "axis", "hinge", "part", "face", "attachment", "orientation", "rotation", "hanging"];
+
 /// Plan the clicks for `block` (world coordinates). `solid(p)` says whether a face of
 /// the block at `p` can be clicked (ground or an already placed block).
 pub fn plan(block: &Block, solid: impl Fn(BlockPos) -> bool) -> Action {
+    plan_clicks(block, |c| solid(c.support))
+}
+
+/// Like [`plan`], but `usable(click)` judges whole clicks (so a caller can also refuse a face
+/// that would merge into the support, see [`orient::merges_into`]).
+pub fn plan_clicks(block: &Block, usable: impl Fn(&Click) -> bool) -> Action {
     if second_half_is_automatic(block) {
         return Action::Skip("second half is placed together with the first");
     }
     let pos = block.pos;
-    let mut honoured: Vec<&str> = Vec::new();
-    let mut yaw: Option<f32> = None;
+    let rule = orient::rule(block);
+    let (yaw, pitch) = orient::look(block);
+    let all = candidates(pos, matches!(rule, Rule::Half(true) | Rule::Trapdoor { top: true, .. }));
+    let allowed = |c: &&Click| rule.allows(c.face, c.cursor.1);
 
-    // Horizontal facing → player yaw.
-    if let Some(facing) = block.prop("facing").and_then(Face::from_name) {
-        if is_same_as_player(&block.name) {
-            yaw = facing.yaw();
-        } else if is_opposite_of_player(&block.name) {
-            yaw = facing.opposite().yaw();
-        }
-        if yaw.is_some() {
-            honoured.push("facing");
-        }
-    }
-
-    // Vertical half: stairs `half`, slabs `type`.
-    let want_top = (is_stairs(&block.name) && block.prop("half") == Some("top"))
-        || (is_slab(&block.name) && block.prop("type") == Some("top"));
-    let want_double = is_slab(&block.name) && block.prop("type") == Some("double");
-    if is_stairs(&block.name) && block.prop("half").is_some() {
-        honoured.push("half");
-    }
-    if is_slab(&block.name) && block.prop("type").is_some() {
-        honoured.push("type");
-    }
-    // The lower door half / bed foot is what a normal placement creates.
-    let lower_half = block.prop("half") == Some("lower");
-    if lower_half && (block.name.ends_with("_door") || is_tall_plant(&block.name)) {
-        honoured.push("half");
-    }
-    if block.name.ends_with("_bed") && block.prop("part") == Some("foot") {
-        honoured.push("part");
-    }
-
-    // Axis: click a face perpendicular to the wanted axis.
-    let axis = block.prop("axis").filter(|_| !block.name.contains("portal"));
-
-    let first = pick_click(pos, &solid, want_top, axis);
-    let (first, axis_ok, top_ok) = match first {
-        Some(c) => c,
-        None => {
-            // Nothing to click at all: fall back to the classic "top of the block below".
-            (Click { support: pos.below(), face: Face::Up, cursor: (0.5, 1.0, 0.5) }, axis.is_none(), !want_top)
-        }
+    let mut missing_support = None;
+    let (mut first, rule_ok) = match all.iter().filter(allowed).find(|c| usable(c)) {
+        Some(c) => (c.clone(), true),
+        None => match (rule, all.iter().find(allowed)) {
+            // Attached blocks: only this support will do; the caller must wait for it.
+            (Rule::Exact(_), Some(ideal)) => {
+                missing_support = Some(ideal.support);
+                (ideal.clone(), true)
+            }
+            // Otherwise place it anyway (any click) and report the property that is lost.
+            _ => {
+                let any = all.iter().find(|c| usable(c));
+                let floor = || Click { support: pos.below(), face: Face::Up, cursor: (0.5, 1.0, 0.5) };
+                let click = any.cloned().unwrap_or_else(floor);
+                let ok = rule.allows(click.face, click.cursor.1);
+                (click, ok)
+            }
+        },
     };
-    if axis.is_some() && axis_ok {
-        honoured.push("axis");
+    if block.name.ends_with("_door") && first.face == Face::Up {
+        if let (Some(f), Some(h)) = (block.prop("facing").and_then(Face::from_name), block.prop("hinge")) {
+            let (x, z) = orient::door_cursor(f, h == "right");
+            first.cursor = (x, 1.0, z);
+        }
     }
 
     let mut clicks = vec![first];
-    if want_double {
-        // Second click on the top of the freshly placed bottom slab merges it into a double slab.
+    for _ in 0..orient::extra_clicks(block) {
+        // Same item on the freshly placed block: bottom slab -> double, one more candle, ...
         clicks.push(Click { support: pos, face: Face::Up, cursor: (0.5, 1.0, 0.5) });
-        honoured.push("type");
     }
 
-    let mut unhonoured: Vec<String> = block
+    let honoured = |key: &str, value: &str| match key {
+        "facing" => yaw.is_some() || pitch.is_some() || (rule_ok && !matches!(rule, Rule::Any | Rule::Half(_))),
+        "rotation" => yaw.is_some(),
+        "orientation" => rule_ok && (yaw.is_some() || pitch.is_some()),
+        "half" => match rule {
+            Rule::Half(_) | Rule::Trapdoor { .. } => rule_ok,
+            // the lower half of a door / tall plant is what a placement creates
+            _ => value == "lower",
+        },
+        // slab halves come from the click; chest left/right comes from the partner chest
+        "type" => !block.name.ends_with("_slab") || rule_ok,
+        "axis" => rule_ok,
+        "face" | "hanging" => rule_ok && matches!(rule, Rule::Exact(_)),
+        "hinge" => block.name.ends_with("_door"),
+        "part" => value == "foot",
+        _ => false,
+    };
+    let unhonoured: Vec<String> = block
         .props
-        .keys()
-        .filter(|k| ORIENTATION_PROPS.contains(&k.as_str()) && !honoured.contains(&k.as_str()))
-        .cloned()
+        .iter()
+        .filter(|(k, v)| {
+            orient::unobtainable(k, v) || (ORIENTATION_PROPS.contains(&k.as_str()) && !honoured(k, v))
+        })
+        .map(|(k, _)| k.clone())
         .collect();
-    // `half=top` / `axis` were requested but the surroundings did not allow the needed click.
-    if want_top && !top_ok {
-        let key = if is_slab(&block.name) { "type" } else { "half" };
-        if !unhonoured.iter().any(|k| k == key) {
-            unhonoured.push(key.to_string());
-        }
-    }
-    if axis.is_some() && !axis_ok && !unhonoured.iter().any(|k| k == "axis") {
-        unhonoured.push("axis".to_string());
-    }
-    // An axis of `y` is satisfied by the default top-face click.
-    if axis == Some("y") {
-        unhonoured.retain(|k| k != "axis");
-    }
-    unhonoured.sort();
-    unhonoured.dedup();
-    Action::Place(Plan { clicks, yaw, unhonoured })
+    let sneak = orient::needs_sneak(block);
+    Action::Place(Plan { clicks, yaw, pitch, sneak, missing_support, unhonoured })
 }
 
-/// Choose a click that yields the wanted vertical half / axis. Returns
-/// `(click, axis_satisfied, half_satisfied)`.
-fn pick_click(
-    pos: BlockPos,
-    solid: &impl Fn(BlockPos) -> bool,
-    want_top: bool,
-    axis: Option<&str>,
-) -> Option<(Click, bool, bool)> {
-    // Axis x / z need a click on a face that points along the axis.
-    if let Some(a @ ("x" | "z")) = axis {
-        let faces: [Face; 2] = if a == "x" { [Face::West, Face::East] } else { [Face::North, Face::South] };
-        for f in faces {
-            // Click the face of the neighbour that touches `pos`.
-            let support = pos.offset(f);
-            if solid(support) {
-                let face = f.opposite();
-                return Some((Click { support, face, cursor: side_cursor(face, 0.5) }, true, true));
-            }
-        }
-        return None;
-    }
-
-    if want_top {
-        // Upper half: click the lower face of the block above, or the upper half of a neighbour's side.
-        let above = pos.offset(Face::Up);
-        if solid(above) {
-            return Some((Click { support: above, face: Face::Down, cursor: (0.5, 0.0, 0.5) }, true, true));
-        }
-        for f in Face::HORIZONTAL {
-            let support = pos.offset(f);
-            if solid(support) {
-                let face = f.opposite();
-                return Some((Click { support, face, cursor: side_cursor(face, 0.75) }, true, true));
-            }
-        }
-        // Cannot reach the upper half: place the bottom variant instead.
-        if solid(pos.below()) {
-            return Some((Click { support: pos.below(), face: Face::Up, cursor: (0.5, 1.0, 0.5) }, true, false));
-        }
-        return None;
-    }
-
-    // Default: the top of the block below, else a side face of a neighbour, else the block above.
-    if solid(pos.below()) {
-        return Some((Click { support: pos.below(), face: Face::Up, cursor: (0.5, 1.0, 0.5) }, axis.is_none() || axis == Some("y"), true));
-    }
-    for f in Face::HORIZONTAL {
-        let support = pos.offset(f);
-        if solid(support) {
+/// Every way to click a neighbour of `pos` so the block lands in `pos`, in order of preference.
+fn candidates(pos: BlockPos, upper_first: bool) -> Vec<Click> {
+    let floor = Click { support: pos.below(), face: Face::Up, cursor: (0.5, 1.0, 0.5) };
+    let ceiling = Click { support: pos.offset(Face::Up), face: Face::Down, cursor: (0.5, 0.0, 0.5) };
+    let sides = |y: f32| {
+        Face::HORIZONTAL.into_iter().map(move |f| {
             let face = f.opposite();
-            return Some((Click { support, face, cursor: side_cursor(face, 0.25) }, axis.is_none() || axis == Some("y"), true));
-        }
-    }
-    let above = pos.offset(Face::Up);
-    if solid(above) {
-        return Some((Click { support: above, face: Face::Down, cursor: (0.5, 0.0, 0.5) }, axis.is_none() || axis == Some("y"), true));
-    }
-    None
+            Click { support: pos.offset(f), face, cursor: side_cursor(face, y) }
+        })
+    };
+    let (first, last) = if upper_first { (ceiling, floor) } else { (floor, ceiling) };
+    let mut out = vec![first];
+    out.extend(sides(0.25));
+    out.extend(sides(0.75));
+    out.push(last);
+    out
 }
 
 /// Cursor position on a horizontal face at relative height `y` (0..1).
@@ -394,13 +311,6 @@ mod tests {
     fn upper_door_half_is_skipped() {
         assert!(matches!(plan(&block("oak_door[half=upper,facing=north]"), world(&[])), Action::Skip(_)));
         assert!(matches!(plan(&block("oak_door[half=lower,facing=north]"), world(&[(0, 0, 0)])), Action::Place(_)));
-    }
-
-    #[test]
-    fn trapdoor_is_not_treated_as_door() {
-        let p = unwrap_plan(plan(&block("oak_trapdoor[facing=north,half=bottom]"), world(&[(0, 0, 0)])));
-        assert!(p.yaw.is_none());
-        assert!(!p.unhonoured.is_empty());
     }
 
     #[test]

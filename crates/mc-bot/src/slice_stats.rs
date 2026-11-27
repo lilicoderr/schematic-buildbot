@@ -1,6 +1,8 @@
 //! Header statistics of a freshly sliced plan.
 
 use crate::plan::{Plan, Step};
+use crate::schematic::Block;
+use std::collections::BTreeMap;
 
 /// Seconds per walk step (0.21 blocks/tick at 20 Hz), jump, pillar block, placement.
 const T_STEP: f64 = 0.25;
@@ -21,6 +23,29 @@ pub fn neighbour_derived(schem: &crate::schematic::Schematic) -> usize {
             shape || connections
         })
         .count()
+}
+
+/// Predict the final states from the plan's build order and record how many wanted
+/// neighbour-derived properties will differ, per `block.property`.
+pub fn fill_mismatches(plan: &mut Plan) {
+    let order: Vec<Block> = plan
+        .steps
+        .iter()
+        .filter_map(|s| match s {
+            Step::Place { pos, state, .. } | Step::Auto { pos, state } => Some(Block::from_state(*pos, state)),
+            _ => None,
+        })
+        .collect();
+    let wrong = crate::predict::mismatches(&order, plan.header.origin.1);
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+    for m in &wrong {
+        *kinds.entry(format!("{}.{}", m.name, m.prop)).or_default() += 1;
+    }
+    plan.header.stats.push(("state_mismatches".into(), wrong.len().to_string()));
+    if !kinds.is_empty() {
+        let list: Vec<String> = kinds.iter().map(|(k, n)| format!("{k}:{n}")).collect();
+        plan.header.stats.push(("state_mismatch_kinds".into(), list.join(" ")));
+    }
 }
 
 pub fn fill(plan: &mut Plan, schematic_blocks: usize, unhonoured: usize) {
