@@ -10,7 +10,7 @@ use crate::world::{eye_to_box, within_reach, BlockPos, Face, Vec3, CLICK_REACH};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Longest chain of scaffold blocks between a solid anchor and the block.
-pub const MAX_CHAIN: usize = 3;
+pub const MAX_CHAIN: usize = 8;
 
 /// Cursor in the middle of the clicked face (all vanilla placements accept it).
 pub fn face_cursor(face: Face) -> (f32, f32, f32) {
