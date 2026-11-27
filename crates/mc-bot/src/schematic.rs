@@ -61,6 +61,22 @@ impl Block {
 }
 
 /// Split `minecraft:oak_stairs[facing=east]` into (`oak_stairs`, {facing: east}).
+/// Side length of the square tiles a layer is swept in. A bot standing in the middle of a tile
+/// reaches all of it, so it only moves when it changes tile.
+pub const SWEEP_TILE: i32 = 8;
+
+/// Position key that orders one layer as a boustrophedon over `SWEEP_TILE` tiles, with
+/// serpentine rows inside each tile. Consecutive blocks are almost always neighbours, so the
+/// bot walks far less than with a plain row-by-row scan (which jumps back across the whole
+/// layer after every row).
+pub fn sweep_key(p: BlockPos) -> (i32, i32, i32, i32) {
+    let tx = p.x.div_euclid(SWEEP_TILE);
+    let tz = p.z.div_euclid(SWEEP_TILE);
+    let tile_x = if tz % 2 == 0 { tx } else { -tx };
+    let row_x = if p.z % 2 == 0 { p.x } else { -p.x };
+    (tz, tile_x, p.z, row_x)
+}
+
 pub fn split_state(state: &str) -> (String, BTreeMap<String, String>) {
     let (head, rest) = match state.split_once('[') {
         Some((h, r)) => (h, r.trim_end_matches(']')),
@@ -155,7 +171,7 @@ impl Schematic {
     pub fn plan_order(&self) -> (Vec<&Block>, Vec<&Block>) {
         let (min, _) = self.bounds();
         let mut sorted: Vec<&Block> = self.blocks.iter().collect();
-        sorted.sort_by_key(|b| (b.pos.y, b.pos.z, b.pos.x));
+        sorted.sort_by_key(|b| (b.pos.y, sweep_key(b.pos)));
 
         let mut placed: HashSet<BlockPos> = HashSet::new();
         let mut order: Vec<&Block> = Vec::with_capacity(sorted.len());
@@ -344,6 +360,33 @@ mod tests {
         let order = s.build_order();
         assert_eq!(order[0].pos.y, 0);
         assert_eq!(order[1].pos.y, 2);
+    }
+
+    fn travel(order: &[&Block]) -> f64 {
+        order
+            .windows(2)
+            .map(|w| {
+                let (a, b) = (w[0].pos, w[1].pos);
+                (((a.x - b.x).pow(2) + (a.z - b.z).pow(2)) as f64).sqrt()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn sweep_order_walks_less_than_row_scan() {
+        let mut blocks = Vec::new();
+        for x in 0..48 {
+            for z in 0..48 {
+                blocks.push(Block::new(BlockPos::new(x, 0, z), "stone"));
+            }
+        }
+        let s = Schematic { name: "slab".into(), blocks };
+        let (swept, unanchored) = s.plan_order();
+        assert!(unanchored.is_empty());
+        assert_eq!(swept.len(), 48 * 48);
+        let mut rows: Vec<&Block> = s.blocks.iter().collect();
+        rows.sort_by_key(|b| (b.pos.z, b.pos.x));
+        assert!(travel(&swept) < travel(&rows) * 0.7, "{} vs {}", travel(&swept), travel(&rows));
     }
 
     #[test]
