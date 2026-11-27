@@ -96,3 +96,23 @@ fn unreachable_blocks_are_allowed_to_be_missing_only_when_declared() {
     p.header.unreachable.push((BlockPos::new(5, 1, 5), "stone".into()));
     assert!(simulate(&p, &two_stack()).is_ok());
 }
+
+#[test]
+fn rejects_clicking_a_usable_block_without_sneaking() {
+    let s = Schematic::parse("palette D oak_door
+palette S stone
+layer 0
+D
+layer 1
+S
+").unwrap();
+    let door = Step::Place {
+        pos: BlockPos::new(5, 0, 5),
+        state: "oak_door".into(),
+        yaw: None,
+        clicks: vec![ClickStep { support: BlockPos::new(5, -1, 5), face: Face::Up, cursor: (0.5, 1.0, 0.5) }],
+    };
+    let on_door = place(5, 1, 5, 5, 0, 5, Face::Up);
+    let e = simulate(&base_plan(vec![door, on_door]), &s).unwrap_err();
+    assert!(e.msg.contains("usable block"), "{e:?}");
+}

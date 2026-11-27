@@ -47,6 +47,23 @@ pub enum Action {
 /// honoured we report them. (Connection/shape properties are derived by the server.)
 const ORIENTATION_PROPS: &[&str] = &["facing", "half", "type", "axis", "hinge", "part", "face", "attachment", "orientation"];
 
+/// Blocks that react to a plain right click (docs/RE/placement.md section 2.7c): clicking one
+/// without sneaking opens or toggles it instead of placing, so it is never used as click support.
+pub fn is_usable(name: &str) -> bool {
+    const EXACT: [&str; 14] = [
+        "chest", "trapped_chest", "ender_chest", "barrel", "crafting_table", "furnace", "blast_furnace", "smoker",
+        "anvil", "note_block", "lectern", "lever", "enchanting_table", "jukebox",
+    ];
+    (name.ends_with("_door") && name != "iron_door")
+        || name.ends_with("_trapdoor")
+        || name.ends_with("_fence_gate")
+        || name.ends_with("_button")
+        || name.ends_with("_bed")
+        || name.ends_with("shulker_box")
+        || name.ends_with("_sign")
+        || EXACT.contains(&name)
+}
+
 fn is_same_as_player(name: &str) -> bool {
     name.ends_with("_stairs")
         || (name.ends_with("_door") && !name.ends_with("trapdoor"))

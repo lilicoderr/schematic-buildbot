@@ -8,6 +8,21 @@ const T_JUMP: f64 = 0.4;
 const T_PILLAR: f64 = 0.35;
 const T_PLACE: f64 = 0.06;
 
+/// Blocks whose requested state is derived by the server from the neighbours (stair shape, fence /
+/// pane / wall connections, docs/RE/block_states.md): the plan cannot choose it, only the build
+/// order influences it, so these are reported instead of claimed as exact.
+pub fn neighbour_derived(schem: &crate::schematic::Schematic) -> usize {
+    schem
+        .blocks
+        .iter()
+        .filter(|b| {
+            let shape = b.prop("shape").is_some_and(|v| v != "straight");
+            let connections = ["north", "east", "south", "west"].iter().any(|k| b.prop(k).is_some_and(|v| v != "false" && v != "none"));
+            shape || connections
+        })
+        .count()
+}
+
 pub fn fill(plan: &mut Plan, schematic_blocks: usize, unhonoured: usize) {
     let (mut moves, mut jumps, mut pillars, mut places, mut breaks) = (0, 0, 0, 0, 0);
     let mut last_y = plan.header.start.1;

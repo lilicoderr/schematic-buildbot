@@ -81,6 +81,8 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     let mut site = Site::new(Terrain::new(origin.1, HashSet::new()));
     let mut rec = Recorder { feet: cell_feet(start), steps: Vec::new() };
     let mut placed: HashSet<BlockPos> = HashSet::new();
+    // placed blocks a plain click would open: never clicked against
+    let mut usable: HashSet<BlockPos> = HashSet::new();
     let (mut count, mut hash, mut since_cp, mut cp_n) = (0u32, 0u64, 0usize, 0u32);
     let mut unreachable: Vec<(BlockPos, String)> = Vec::new();
     let mut deviations = 0usize;
@@ -154,7 +156,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
         }
         // Click only against blocks that are really within the server's click reach (docs/RE/placement.md).
         let feet_now = rec.feet;
-        let near = |p: BlockPos| solid(p) && crate::world::eye_to_box(feet_now, p) <= crate::world::CLICK_REACH;
+        let near = |p: BlockPos| solid(p) && !usable.contains(&p) && crate::world::eye_to_box(feet_now, p) <= crate::world::CLICK_REACH;
         let mut pl = match placement::plan(&Block { pos: world, ..(*b).clone() }, near) {
             Action::Place(p) => p,
             Action::Skip(_) => pl,
@@ -194,6 +196,9 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
         }
         placed.insert(world);
         site.terrain.add_block((world.x, world.y, world.z), crate::nav::is_standable_surface(&b.name, b.prop("type")));
+        if placement::is_usable(&b.name) {
+            usable.insert(world);
+        }
         count += 1;
         hash = hash.wrapping_add(block_hash(world, &state));
         since_cp += 1;
@@ -224,6 +229,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     plan.header.protocol = protocol;
     plan.header.unreachable = unreachable;
     crate::slice_stats::fill(&mut plan, schem.blocks.len(), deviations);
+    plan.header.stats.push(("state_neighbour_derived".into(), crate::slice_stats::neighbour_derived(schem).to_string()));
     if let Err(e) = sim::simulate(&plan, schem) {
         if let Ok(p) = std::env::var("BUILDBOT_FAILED_PLAN") {
             let _ = std::fs::write(p, plan.to_text());

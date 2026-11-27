@@ -118,6 +118,11 @@ fn click_ok(w: &World, pos: BlockPos, support: BlockPos, face: Face) -> Result<(
     if !w.solid(cell(support)) {
         return Err(format!("click support {support:?} is air"));
     }
+    if let Some(state) = w.blocks.get(&cell(support)) {
+        if crate::placement::is_usable(&split_state(state).0) {
+            return Err(format!("click support {support:?} is a usable block (a plain click would open it)"));
+        }
+    }
     if support.offset(face) != pos && support != pos {
         return Err(format!("clicking {face:?} of {support:?} does not lead to {pos:?}"));
     }
