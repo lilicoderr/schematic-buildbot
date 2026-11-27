@@ -7,6 +7,7 @@
 //!    the click face/cursor/yaw come from [`crate::placement`].
 //!  · Only place when the eye-to-block distance is within reach, otherwise walk closer first.
 
+use crate::blocklog::{self, BlockLog};
 use crate::ids;
 use crate::net::Connection;
 use crate::placement::Plan;
@@ -15,8 +16,13 @@ use crate::tr;
 use crate::world::{look_at, within_reach, BlockPos, Face, Vec3, EYE_HEIGHT};
 use mc_proto::buf::PacketBuf;
 use std::io;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
+
+/// Ground speed per 20 Hz tick: 4.2 blocks/s, just under vanilla walking speed (4.317).
+const WALK_STEP: f64 = 0.21;
+/// Flight speed per tick: 9 blocks/s, under the creative flying speed (10.9).
+const FLY_STEP: f64 = 0.45;
+const TICK: Duration = Duration::from_millis(50);
 
 pub struct PlayClient {
     pub conn: Connection,
@@ -28,6 +34,14 @@ pub struct PlayClient {
     pub kicked: Option<String>,
     /// Pause after each placement; raise it on servers with strict packet-rate limits.
     pub place_delay: Duration,
+    /// Last state the server reported per block position (see [`BlockLog`]).
+    pub blocks: BlockLog,
+    /// The server granted creative flight (abilities packet).
+    pub may_fly: bool,
+    pub flying: bool,
+    /// Teleports forced by the server (a sign we are pushing into something).
+    pub teleports: u32,
+    next_tick: Instant,
 }
 
 impl PlayClient {
@@ -47,8 +61,13 @@ impl PlayClient {
             held_item: -1,
             kicked: None,
             place_delay: Duration::from_millis(25),
+            blocks: BlockLog::default(),
+            may_fly: false,
+            flying: false,
+            teleports: 0,
+            next_tick: Instant::now(),
         };
-        client.conn.set_read_timeout(Some(Duration::from_millis(50)))?;
+        client.conn.set_read_timeout(Some(Duration::from_millis(5)))?;
         // Pump packets until the first teleport sync fixes our position
         let deadline = Instant::now() + Duration::from_secs(10);
         while client.feet == Vec3::new(0.0, 0.0, 0.0) && Instant::now() < deadline {
@@ -95,8 +114,23 @@ impl PlayClient {
                         let mut r = PacketBuf::new();
                         r.write_varint(tp);
                         self.conn.send(ids::SB_PLAY_CONFIRM_TELEPORT, r.as_slice())?;
+                        self.teleports += 1;
                         // After confirming, report the current position
-                        self.send_pos_look(true)?;
+                        self.send_pos_look(!self.flying)?;
+                    }
+                    ids::CB_PLAY_ABILITIES => {
+                        let flags = body.read_i8().unwrap_or(0);
+                        self.may_fly = flags & 0x04 != 0;
+                    }
+                    ids::CB_PLAY_BLOCK_CHANGE => {
+                        if let Some((pos, state)) = blocklog::parse_block_change(&mut body) {
+                            self.blocks.record(pos, state);
+                        }
+                    }
+                    ids::CB_PLAY_MULTI_BLOCK_CHANGE => {
+                        for (pos, state) in blocklog::parse_multi_block_change(&mut body).unwrap_or_default() {
+                            self.blocks.record(pos, state);
+                        }
                     }
                     ids::CB_PLAY_DISCONNECT => {
                         let reason = body.read_string().unwrap_or_default();
@@ -149,9 +183,21 @@ impl PlayClient {
         self.conn.send(ids::SB_PLAY_SET_POS_ROT, b.as_slice())
     }
 
-    /// Walk along the ground to (tx, tz), keeping y (flat ground assumed), in small steps to avoid speed kicks.
+    /// Wait for the next 20 Hz tick boundary while answering incoming packets.
+    fn tick(&mut self) -> io::Result<()> {
+        loop {
+            self.pump_once()?;
+            if self.kicked.is_some() || Instant::now() >= self.next_tick {
+                break;
+            }
+        }
+        let now = Instant::now();
+        self.next_tick = if now > self.next_tick + TICK * 4 { now + TICK } else { self.next_tick + TICK };
+        Ok(())
+    }
+
+    /// Walk along the ground to (tx, tz), keeping y (flat ground assumed), one fixed step per tick.
     pub fn walk_to(&mut self, tx: f64, tz: f64) -> io::Result<()> {
-        const STEP: f64 = 0.26; // max movement per tick (walking is ~0.21)
         let target = Vec3::new(tx, self.feet.y, tz);
         let mut guard = 0;
         let mut best = f64::MAX;
@@ -172,15 +218,47 @@ impl PlayClient {
             let dx = target.x - self.feet.x;
             let dz = target.z - self.feet.z;
             let d = (dx * dx + dz * dz).sqrt();
-            let s = d.min(STEP);
+            let s = d.min(WALK_STEP);
             self.feet.x += dx / d * s;
             self.feet.z += dz / d * s;
-            self.send_pos(true)?;
-            self.pump_once()?;
+            self.send_pos(!self.flying)?;
+            self.tick()?;
             if self.kicked.is_some() {
                 break;
             }
-            sleep(Duration::from_millis(40));
+        }
+        Ok(())
+    }
+
+    /// Turn creative flight on or off. Returns `false` when the server did not grant flight.
+    pub fn set_flying(&mut self, on: bool) -> io::Result<bool> {
+        if on && !self.may_fly {
+            return Ok(false);
+        }
+        let mut b = PacketBuf::new();
+        b.write_i8(if on { 0x02 } else { 0 });
+        self.conn.send(ids::SB_PLAY_ABILITIES, b.as_slice())?;
+        self.flying = on;
+        Ok(true)
+    }
+
+    /// Fly in a straight line to `target` (3D), one fixed step per tick. Gives up after the
+    /// server teleports us back several times (something solid is in the way).
+    pub fn fly_to(&mut self, target: Vec3) -> io::Result<()> {
+        let teleports_at_start = self.teleports;
+        let mut guard = 0;
+        while self.feet.dist(target) > 0.05 && guard < 2000 && self.teleports - teleports_at_start < 3 {
+            guard += 1;
+            let d = self.feet.dist(target);
+            let s = d.min(FLY_STEP) / d;
+            self.feet.x += (target.x - self.feet.x) * s;
+            self.feet.y += (target.y - self.feet.y) * s;
+            self.feet.z += (target.z - self.feet.z) * s;
+            self.send_pos(false)?;
+            self.tick()?;
+            if self.kicked.is_some() {
+                break;
+            }
         }
         Ok(())
     }
@@ -248,7 +326,7 @@ impl PlayClient {
         self.yaw = plan.yaw.unwrap_or(look_yaw);
         self.pitch = pitch;
         self.set_creative_held(item_id)?;
-        self.send_pos_look(true)?;
+        self.send_pos_look(!self.flying)?;
         for click in &plan.clicks {
             self.use_item_on(click.support, click.face, click.cursor)?;
             self.idle(self.place_delay)?;

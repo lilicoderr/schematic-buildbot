@@ -16,7 +16,7 @@ use mc_bot::{blocks, i18n, litematic, schem, tr};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DEFAULT_BLUEPRINT: &str = "name Small cottage
 palette W white_concrete
@@ -52,6 +52,9 @@ OPTIONS:
   --delay-ms <N>       pause after each placement (default 25)
   --rate <N>           cap placements per second (overrides --delay-ms)
   --version <V>        Minecraft version to announce (default 1.21.1)
+  --fly                hover above the build with creative flight (reaches roofs, tall towers
+                       and floor interiors); default is ground-only walking
+  --verify             re-place blocks the server did not confirm (a report is always printed)
   --resume             continue an interrupted build from the progress file
   --progress-file <F>  progress file path (default .buildbot-progress)
   --lang <en|ko>       output language (also BUILDBOT_LANG)
@@ -73,6 +76,9 @@ build-bot — 설계도를 Minecraft 오프라인 서버에 건축
   --delay-ms <N>       설치마다 대기(기본 25)
   --rate <N>           초당 설치 수 상한 (--delay-ms 보다 우선)
   --version <V>        알릴 마인크래프트 버전 (기본 1.21.1)
+  --fly                크리에이티브 비행으로 건물 위에서 작업 (지붕·높은 탑·바닥 안쪽까지 도달).
+                       기본은 지면 보행 전용
+  --verify             서버가 확인하지 않은 블록을 다시 설치 (확인 보고는 항상 출력)
   --resume             중단된 건축을 진행 파일에서 이어서 진행
   --progress-file <F>  진행 파일 경로 (기본 .buildbot-progress)
   --lang <en|ko>       출력 언어 (환경변수 BUILDBOT_LANG)
@@ -91,6 +97,8 @@ struct Opts {
     rate: Option<f64>,
     version: Option<String>,
     resume: bool,
+    fly: bool,
+    verify: bool,
     progress_file: Option<String>,
     lang: Option<String>,
     help: bool,
@@ -107,6 +115,8 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "-h" | "--help" => o.help = true,
             "--dry-run" | "--validate" => o.dry_run = true,
             "--resume" => o.resume = true,
+            "--fly" => o.fly = true,
+            "--verify" => o.verify = true,
             "--delay-ms" => {
                 o.delay_ms = Some(value("--delay-ms")?.parse().map_err(|_| tr!("--delay-ms must be a number", "--delay-ms 는 숫자여야 합니다"))?)
             }
@@ -356,7 +366,21 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
     // Blocks from an earlier run already exist in the world.
     let mut placed: HashSet<BlockPos> = order.iter().take(start).map(|b| at(b)).collect();
 
+    let fly = if opts.fly {
+        bot.idle(Duration::from_millis(300))?; // let the abilities packet arrive
+        let granted = bot.set_flying(true)?;
+        if !granted {
+            println!("{}", tr!("the server did not grant flight, staying on the ground", "서버가 비행을 허용하지 않아 지면 모드로 진행합니다"));
+        }
+        granted
+    } else {
+        false
+    };
+
     let mut stats = Stats::default();
+    let started = Instant::now();
+    let first = start;
+    let mut attempted: Vec<(Block, i32)> = Vec::new();
     let save = |idx: usize| {
         let _ = Progress { fingerprint, origin, done: idx, total }.save(&progress_path);
     };
@@ -367,9 +391,20 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
             break;
         }
         processed += 1;
-        if processed.is_multiple_of(10) || processed == total {
-            eprintln!("{}", tr!("  ...building {}/{} (placed {})", "  …건축 {}/{} (설치 {})", processed, total, stats.done));
+        if processed.is_multiple_of(25) {
             save(processed - 1);
+        }
+        if processed.is_multiple_of(100) || processed == total {
+            let rate = (processed - first) as f64 / started.elapsed().as_secs_f64().max(0.001);
+            let eta = (total - processed) as f64 / rate.max(0.001);
+            eprintln!(
+                "{}",
+                tr!(
+                    "  ...building {}/{} (placed {}) {:.1} blocks/s, ETA {}",
+                    "  …건축 {}/{} (설치 {}) {:.1}블록/초, 남은 시간 {}",
+                    processed, total, stats.done, rate, fmt_duration(eta)
+                )
+            );
         }
         let world = at(b);
         let Some(item) = blocks::item_id(&b.name) else {
@@ -384,14 +419,11 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
             }
             Action::Place(p) => p,
         };
-        if !within_reach(bot.feet, world) {
-            if let Some(route) = route_to_reach(bot.feet, world, origin.y, &occupied) {
-                bot.walk_route(&route)?;
-            }
-        }
+        move_into_reach(&mut bot, world, origin.y, &occupied, fly)?;
         if bot.place(world, item, &plan)? {
             stats.done += 1;
             placed.insert(world);
+            attempted.push((Block { pos: world, ..(*b).clone() }, item));
             stats.note_defaults(&b.name, &plan.unhonoured);
         } else {
             stats.out_of_reach += 1;
@@ -399,6 +431,12 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
     }
 
     bot.idle(Duration::from_millis(500))?;
+    if opts.verify {
+        verify_pass(&mut bot, &attempted, &placed, origin.y, &occupied, fly)?;
+    }
+    stats.confirmed = attempted.iter().filter(|(b, _)| bot.blocks.is_confirmed(b.pos)).count();
+    stats.attempted = attempted.len();
+    stats.elapsed = started.elapsed();
     stats.print();
     match &bot.kicked {
         Some(r) => {
@@ -428,6 +466,9 @@ struct Stats {
     auto_half: u32,
     default_state: u32,
     lost: BTreeMap<String, u32>,
+    confirmed: usize,
+    attempted: usize,
+    elapsed: Duration,
 }
 
 impl Stats {
@@ -451,6 +492,18 @@ impl Stats {
                 self.done, self.out_of_reach, self.unknown, self.auto_half
             )
         );
+        println!(
+            "{}",
+            tr!(
+                "server confirmed {}/{} placements, {} in {} ({:.1} blocks/s)",
+                "서버가 확인한 설치 {}/{}, {} 걸림 {} ({:.1}블록/초)",
+                self.confirmed,
+                self.attempted,
+                tr!("took", "소요"),
+                fmt_duration(self.elapsed.as_secs_f64()),
+                self.done as f64 / self.elapsed.as_secs_f64().max(0.001)
+            )
+        );
         if self.default_state > 0 {
             println!(
                 "{}",
@@ -465,6 +518,78 @@ impl Stats {
             }
         }
     }
+}
+
+fn fmt_duration(secs: f64) -> String {
+    let s = secs.max(0.0) as u64;
+    match s {
+        0..=59 => format!("{s}s"),
+        60..=3599 => format!("{}m{:02}s", s / 60, s % 60),
+        _ => format!("{}h{:02}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Where to hover to place `world` from above: two blocks over the target, led two blocks
+/// ahead of the direction of travel so the next few blocks of the sweep stay in reach.
+fn hover_spot(cur: Vec3, world: BlockPos) -> Vec3 {
+    const LEAD: f64 = 2.0;
+    let (dx, dz) = (world.x as f64 + 0.5 - cur.x, world.z as f64 + 0.5 - cur.z);
+    let d = dx.hypot(dz);
+    let (ux, uz) = if d > 1e-6 { (dx / d, dz / d) } else { (0.0, 0.0) };
+    Vec3::new(world.x as f64 + 0.5 + ux * LEAD, world.y as f64 + 2.0, world.z as f64 + 0.5 + uz * LEAD)
+}
+
+/// Bring the bot to a spot from which `world` can be placed: hover above it in fly mode
+/// (everything already built lies at or below the current layer, so the air above is free),
+/// otherwise walk around the structure on the ground.
+fn move_into_reach(
+    bot: &mut PlayClient,
+    world: BlockPos,
+    feet_y: i32,
+    occupied: &HashSet<(i32, i32, i32)>,
+    fly: bool,
+) -> io::Result<()> {
+    if fly {
+        if !within_reach(bot.feet, world) || bot.feet.y < world.y as f64 + 1.0 {
+            bot.fly_to(hover_spot(bot.feet, world))?;
+        }
+    } else if !within_reach(bot.feet, world) {
+        if let Some(route) = route_to_reach(bot.feet, world, feet_y, occupied) {
+            bot.walk_route(&route)?;
+        }
+    }
+    Ok(())
+}
+
+/// Re-place every block the server never confirmed (up to two rounds).
+fn verify_pass(
+    bot: &mut PlayClient,
+    attempted: &[(Block, i32)],
+    placed: &HashSet<BlockPos>,
+    feet_y: i32,
+    occupied: &HashSet<(i32, i32, i32)>,
+    fly: bool,
+) -> io::Result<()> {
+    for round in 1..=2 {
+        let todo: Vec<&(Block, i32)> = attempted.iter().filter(|(b, _)| !bot.blocks.is_confirmed(b.pos)).collect();
+        if todo.is_empty() {
+            break;
+        }
+        println!("{}", tr!("verify: re-placing {} unconfirmed block(s), round {}", "검증: 확인 안 된 블록 {}개를 다시 설치합니다 ({}차)", todo.len(), round));
+        for (b, item) in todo {
+            bot.blocks.forget(b.pos);
+            let solid = |p: BlockPos| p.y < feet_y || placed.contains(&p);
+            if let Action::Place(plan) = placement::plan(b, solid) {
+                move_into_reach(bot, b.pos, feet_y, occupied, fly)?;
+                bot.place(b.pos, *item, &plan)?;
+            }
+            if bot.kicked.is_some() {
+                return Ok(());
+            }
+        }
+        bot.idle(Duration::from_millis(500))?;
+    }
+    Ok(())
 }
 
 /// Route over ground cells to a spot from which `world` is within reach, walking *around*
@@ -510,6 +635,31 @@ mod tests {
         assert_eq!(o.rate, Some(5.0));
         assert!(o.resume);
         assert_eq!(o.lang.as_deref(), Some("ko"));
+    }
+
+    #[test]
+    fn hover_spot_is_above_the_block_and_in_reach() {
+        let target = BlockPos::new(10, 5, 10);
+        for cur in [Vec3::new(0.5, 3.0, 0.5), Vec3::new(10.5, 9.0, 10.5), Vec3::new(30.0, 5.0, -4.0)] {
+            let spot = hover_spot(cur, target);
+            assert_eq!(spot.y, 7.0, "two blocks above the target");
+            assert!(within_reach(spot, target), "{spot:?}");
+            assert!((spot.x - 10.5).hypot(spot.z - 10.5) <= 2.0 + 1e-9);
+        }
+    }
+
+    #[test]
+    fn parses_fly_and_verify() {
+        let a: Vec<String> = ["x", "--fly", "--verify"].map(String::from).to_vec();
+        let o = parse_opts(&a).unwrap();
+        assert!(o.fly && o.verify);
+    }
+
+    #[test]
+    fn durations_are_compact() {
+        assert_eq!(fmt_duration(7.0), "7s");
+        assert_eq!(fmt_duration(125.0), "2m05s");
+        assert_eq!(fmt_duration(7260.0), "2h01m");
     }
 
     #[test]
