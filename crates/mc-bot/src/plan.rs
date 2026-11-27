@@ -23,6 +23,8 @@ pub enum Step {
     Pillar(Cell),
     /// Place `state` at `pos` by clicking (all clicks, in order) while standing still.
     Place { pos: BlockPos, state: String, yaw: Option<f32>, clicks: Vec<ClickStep> },
+    /// A block that appears by itself as part of the previous placement (e.g. a door's upper half).
+    Auto { pos: BlockPos, state: String },
     /// Break one block (creative: instant). Only scaffold may be broken.
     Break(BlockPos),
     /// After this step exactly `count` schematic blocks must stand, with order-independent `hash`.
@@ -33,6 +35,8 @@ pub enum Step {
 pub struct Header {
     pub schematic_hash: u64,
     pub origin: (i32, i32, i32),
+    /// Feet cell the plan starts from.
+    pub start: (i32, i32, i32),
     pub protocol: i32,
     /// Free-form `key value` statistics (blocks, steps, supports, estimated seconds ...).
     pub stats: Vec<(String, String)>,
@@ -55,6 +59,7 @@ impl fmt::Display for Step {
         match self {
             Step::Move((x, y, z)) => write!(f, "MOVE {x} {y} {z}"),
             Step::Pillar((x, y, z)) => write!(f, "PILLAR {x} {y} {z}"),
+            Step::Auto { pos, state } => write!(f, "AUTO {} {} {} {state}", pos.x, pos.y, pos.z),
             Step::Break(p) => write!(f, "BREAK {} {} {}", p.x, p.y, p.z),
             Step::Checkpoint { n, count, hash } => write!(f, "CHECKPOINT {n} {count} {hash:016x}"),
             Step::Place { pos, state, yaw, clicks } => {
@@ -79,6 +84,7 @@ impl Plan {
         let _ = writeln!(s, "# bbplan {FORMAT_VERSION}");
         let _ = writeln!(s, "# schematic {:016x}", h.schematic_hash);
         let _ = writeln!(s, "# origin {} {} {}", h.origin.0, h.origin.1, h.origin.2);
+        let _ = writeln!(s, "# start {} {} {}", h.start.0, h.start.1, h.start.2);
         let _ = writeln!(s, "# protocol {}", h.protocol);
         for (k, v) in &h.stats {
             let _ = writeln!(s, "# stat {k} {v}");
@@ -91,4 +97,13 @@ impl Plan {
         }
         s
     }
+}
+
+/// Order-independent hash contribution of one block.
+pub fn block_hash(pos: BlockPos, state: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in format!("{} {} {} {state}", pos.x, pos.y, pos.z).bytes() {
+        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+    }
+    h
 }

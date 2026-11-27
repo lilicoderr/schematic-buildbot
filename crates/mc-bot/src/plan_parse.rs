@@ -32,6 +32,7 @@ fn header_line(h: &mut Header, rest: &str, line: usize, seen_version: &mut bool)
         }
         Some("schematic") => h.schematic_hash = u64::from_str_radix(it.next().unwrap_or(""), 16).map_err(|e| e.to_string())?,
         Some("origin") => h.origin = (num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?),
+        Some("start") => h.start = (num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?),
         Some("protocol") => h.protocol = num(it.next(), line)?,
         Some("stat") => {
             let k = it.next().unwrap_or("").to_string();
@@ -62,6 +63,10 @@ pub fn parse(text: &str) -> Result<Plan, String> {
         let step = match it.next() {
             Some("MOVE") => Step::Move((num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?)),
             Some("PILLAR") => Step::Pillar((num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?)),
+            Some("AUTO") => Step::Auto {
+                pos: BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?),
+                state: it.next().unwrap_or("").to_string(),
+            },
             Some("BREAK") => Step::Break(BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?)),
             Some("CHECKPOINT") => Step::Checkpoint {
                 n: num(it.next(), line)?,
@@ -97,6 +102,7 @@ mod tests {
         p.header.schematic_hash = 0xdead_beef;
         p.header.origin = (-3, 64, 9);
         p.header.protocol = 767;
+        p.header.start = (0, 64, 1);
         p.header.stats.push(("blocks".into(), "2".into()));
         p.header.unreachable.push((BlockPos::new(1, 2, 3), "glass".into()));
         p.steps = vec![
@@ -108,6 +114,7 @@ mod tests {
                 yaw: Some(-90.0),
                 clicks: vec![ClickStep { support: BlockPos::new(2, 63, 2), face: Face::Up, cursor: (0.5, 1.0, 0.75) }],
             },
+            Step::Auto { pos: BlockPos::new(2, 65, 2), state: "oak_door[half=upper]".into() },
             Step::Break(BlockPos::new(1, 64, 2)),
             Step::Checkpoint { n: 1, count: 1, hash: 0xabc },
         ];
