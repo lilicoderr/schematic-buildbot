@@ -7,3 +7,5 @@ Cargo.lock.bak
 __pycache__/
 *.pyc
 .buildbot-progress
+node_modules/
+/tools/viewer/out/
