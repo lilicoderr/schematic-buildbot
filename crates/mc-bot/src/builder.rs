@@ -9,6 +9,7 @@
 
 use crate::blocklog::{self, BlockLog};
 use crate::ids;
+use crate::nav::{cell_feet, Cell};
 use crate::net::Connection;
 use crate::placement::Plan;
 use crate::proto::{self, JoinInfo};
@@ -20,6 +21,10 @@ use std::time::{Duration, Instant};
 
 /// Ground speed per 20 Hz tick: 4.2 blocks/s, just under vanilla walking speed (4.317).
 const WALK_STEP: f64 = 0.21;
+/// Feet height above the take-off surface on ticks 1..=3 of a vanilla jump (0.42 initial velocity).
+const JUMP_ARC: [f64; 3] = [0.42, 0.7532, 1.0013];
+/// Fall distance per tick while dropping off an edge.
+const FALL_STEP: f64 = 0.5;
 const TICK: Duration = Duration::from_millis(50);
 
 /// One walking step from `feet` toward `target`: horizontal only, at most [`WALK_STEP`], and
@@ -246,6 +251,65 @@ impl PlayClient {
         self.send_pos(true)?;
         self.idle(Duration::from_millis(100))?;
         Ok(start_y - self.feet.y)
+    }
+
+    /// Follow a route of feet cells: walk on the level, jump up one block, drop down a few.
+    pub fn walk_cells(&mut self, route: &[Cell]) -> io::Result<()> {
+        for pair in route.windows(2) {
+            let target = cell_feet(pair[1]);
+            match pair[1].1.cmp(&pair[0].1) {
+                std::cmp::Ordering::Equal => self.walk_to(target.x, target.z)?,
+                std::cmp::Ordering::Greater => self.jump_to(target)?,
+                std::cmp::Ordering::Less => self.drop_to(target)?,
+            }
+            if self.kicked.is_some() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Jump straight up the vanilla arc, glide over the edge at jump height, land on `target`.
+    fn jump_to(&mut self, target: Vec3) -> io::Result<()> {
+        let base = self.feet.y;
+        for rise in JUMP_ARC {
+            self.feet.y = base + rise;
+            self.send_pos(false)?;
+            self.tick()?;
+        }
+        let hold = Vec3::new(target.x, self.feet.y, target.z);
+        for _ in 0..40 {
+            if self.feet.horiz_dist(hold) <= 0.05 || self.kicked.is_some() {
+                break;
+            }
+            self.feet = walk_step(self.feet, hold);
+            self.send_pos(false)?;
+            self.tick()?;
+        }
+        self.feet = target;
+        self.send_pos(true)?;
+        self.tick()
+    }
+
+    /// Step off an edge toward `target` (lower than we are) and fall onto it.
+    fn drop_to(&mut self, target: Vec3) -> io::Result<()> {
+        let level = Vec3::new(target.x, self.feet.y, target.z);
+        for _ in 0..40 {
+            if self.feet.horiz_dist(level) <= 0.05 || self.kicked.is_some() {
+                break;
+            }
+            self.feet = walk_step(self.feet, level);
+            self.send_pos(self.feet.horiz_dist(level) > 0.3)?;
+            self.tick()?;
+        }
+        while self.feet.y > target.y + 1e-9 && self.kicked.is_none() {
+            self.feet.y = (self.feet.y - FALL_STEP).max(target.y);
+            self.send_pos(false)?;
+            self.tick()?;
+        }
+        self.feet = target;
+        self.send_pos(true)?;
+        self.tick()
     }
 
     /// Walk along a precomputed route of ground cells (see [`crate::path::find_path`]).

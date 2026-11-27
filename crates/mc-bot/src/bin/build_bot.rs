@@ -6,12 +6,12 @@
 //! first. Works on creative-mode servers (it puts blocks in hand via set-creative-slot).
 
 use mc_bot::builder::PlayClient;
-use mc_bot::path::{find_path, Cell};
+use mc_bot::nav::{self, Terrain};
 use mc_bot::placement::{self, Action};
 use mc_bot::progress::Progress;
 use mc_bot::schematic::{Block, Schematic};
 use mc_bot::version::{self, Version};
-use mc_bot::world::{within_reach, BlockPos, Vec3};
+use mc_bot::world::{within_reach, BlockPos};
 use mc_bot::{blocks, i18n, litematic, schem, tr};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Read};
@@ -363,6 +363,10 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
     let occupied: HashSet<(i32, i32, i32)> = order.iter().map(|b| at(b)).map(|p| (p.x, p.y, p.z)).collect();
     // Blocks from an earlier run already exist in the world.
     let mut placed: HashSet<BlockPos> = order.iter().take(start).map(|b| at(b)).collect();
+    let mut terrain = Terrain::new(origin.y, occupied.iter().copied().collect());
+    for b in order.iter().take(start) {
+        terrain_add(&mut terrain, at(b), b);
+    }
 
     let mut stats = Stats::default();
     let started = Instant::now();
@@ -407,7 +411,7 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
             Action::Place(p) => p,
         };
         let t0 = Instant::now();
-        move_into_reach(&mut bot, world, origin.y, &occupied)?;
+        approach(&mut bot, &terrain, world)?;
         let t1 = Instant::now();
         let ok = bot.place(world, item, &plan)?;
         stats.moving += t1 - t0;
@@ -415,6 +419,7 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
         if ok {
             stats.done += 1;
             placed.insert(world);
+            terrain_add(&mut terrain, world, b);
             attempted.push((Block { pos: world, ..(*b).clone() }, item));
             stats.note_defaults(&b.name, &plan.unhonoured);
         } else {
@@ -424,7 +429,7 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
 
     bot.idle(Duration::from_millis(500))?;
     if opts.verify {
-        verify_pass(&mut bot, &attempted, &placed, origin.y, &occupied)?;
+        verify_pass(&mut bot, &attempted, &placed, &terrain, origin.y)?;
     }
     stats.confirmed = attempted.iter().filter(|(b, _)| bot.blocks.is_confirmed(b.pos)).count();
     stats.attempted = attempted.len();
@@ -532,13 +537,18 @@ fn fmt_duration(secs: f64) -> String {
     }
 }
 
-/// Walk around the structure to a ground cell from which `world` is in reach. Blocks that no
-/// ground cell can reach (floor interiors, roofs, tall towers) are left alone and counted as out
-/// of reach: the bot never flies or hovers.
-fn move_into_reach(bot: &mut PlayClient, world: BlockPos, feet_y: i32, occupied: &HashSet<(i32, i32, i32)>) -> io::Result<()> {
+fn terrain_add(terrain: &mut Terrain, world: BlockPos, b: &Block) {
+    terrain.add_block((world.x, world.y, world.z), nav::is_standable_surface(&b.name, b.prop("type")));
+}
+
+/// Walk to a spot from which `world` is in reach: along the ground, over blocks already built
+/// (jumping up one block at a time), or down off them. Blocks that no such spot reaches (roofs,
+/// tall walls) are left alone and counted as out of reach: the bot never flies or hovers.
+fn approach(bot: &mut PlayClient, terrain: &Terrain, world: BlockPos) -> io::Result<()> {
     if !within_reach(bot.feet, world) {
-        if let Some(route) = route_to_reach(bot.feet, world, feet_y, occupied) {
-            bot.walk_route(&route)?;
+        let goal = nav::reaches(terrain, world);
+        if let Some(route) = terrain.route(nav::feet_cell(bot.feet), &goal, 24, 40_000) {
+            bot.walk_cells(&route)?;
         }
     }
     Ok(())
@@ -549,8 +559,8 @@ fn verify_pass(
     bot: &mut PlayClient,
     attempted: &[(Block, i32)],
     placed: &HashSet<BlockPos>,
+    terrain: &Terrain,
     feet_y: i32,
-    occupied: &HashSet<(i32, i32, i32)>,
 ) -> io::Result<()> {
     for round in 1..=2 {
         let todo: Vec<&(Block, i32)> = attempted.iter().filter(|(b, _)| !bot.blocks.is_confirmed(b.pos)).collect();
@@ -562,7 +572,7 @@ fn verify_pass(
             bot.blocks.forget(b.pos);
             let solid = |p: BlockPos| p.y < feet_y || placed.contains(&p);
             if let Action::Place(plan) = placement::plan(b, solid) {
-                move_into_reach(bot, b.pos, feet_y, occupied)?;
+                approach(bot, terrain, b.pos)?;
                 bot.place(b.pos, *item, &plan)?;
             }
             if bot.kicked.is_some() {
@@ -572,28 +582,6 @@ fn verify_pass(
         bot.idle(Duration::from_millis(500))?;
     }
     Ok(())
-}
-
-/// Route over ground cells to a spot from which `world` is within reach, walking *around*
-/// the structure (feet and head cells of the whole blueprint are treated as walls).
-fn route_to_reach(cur: Vec3, world: BlockPos, feet_y: i32, occupied: &HashSet<(i32, i32, i32)>) -> Option<Vec<Cell>> {
-    let blocked = |x: i32, z: i32| occupied.contains(&(x, feet_y, z)) || occupied.contains(&(x, feet_y + 1, z));
-    let start = (cur.x.floor() as i32, cur.z.floor() as i32);
-    let mut candidates: Vec<(f64, Cell)> = Vec::new();
-    for dx in -5..=5 {
-        for dz in -5..=5 {
-            let (cx, cz) = (world.x + dx, world.z + dz);
-            if blocked(cx, cz) {
-                continue;
-            }
-            let feet = Vec3::new(cx as f64 + 0.5, feet_y as f64, cz as f64 + 0.5);
-            if within_reach(feet, world) {
-                candidates.push((cur.horiz_dist(feet), (cx, cz)));
-            }
-        }
-    }
-    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-    candidates.iter().take(30).find_map(|(_, c)| find_path(start, *c, &blocked, 8))
 }
 
 #[cfg(test)]
@@ -639,16 +627,6 @@ mod tests {
         assert!(parse_opts(&["--nope".to_string()]).is_err());
         assert!(parse_opts(&["--rate".to_string()]).is_err());
         assert!(parse_opts(&["--rate".to_string(), "0".to_string()]).is_err());
-    }
-
-    #[test]
-    fn route_goes_around_the_structure() {
-        // A wall of blocks between the bot and the target forces a detour.
-        let occupied: HashSet<(i32, i32, i32)> = (-2..=2).map(|z| (5, 0, z)).collect();
-        let route = route_to_reach(Vec3::new(0.5, 0.0, 0.5), BlockPos::new(6, 0, 0), 0, &occupied).unwrap();
-        assert!(route.iter().all(|&(x, z)| !occupied.contains(&(x, 0, z))));
-        let last = *route.last().unwrap();
-        assert!(within_reach(Vec3::new(last.0 as f64 + 0.5, 0.0, last.1 as f64 + 0.5), BlockPos::new(6, 0, 0)));
     }
 
     #[test]
