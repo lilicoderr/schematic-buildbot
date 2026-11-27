@@ -6,6 +6,7 @@
 //! that fails simulation.
 
 use crate::blocks;
+use crate::guard::Budget;
 use crate::nav::{blocks_cell, cell_feet, feet_cell, Cell, Terrain};
 use crate::placement::{self, Action};
 use crate::plan::{block_hash, ClickStep, Header, Plan, Step};
@@ -111,6 +112,12 @@ fn click_steps(plan: &placement::Plan) -> Vec<ClickStep> {
 
 /// Cut `schem` into a plan for flat ground whose top is below `origin.1`.
 pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Result<Plan, String> {
+    // generous limits for library use and tests; the CLI passes tighter ones
+    slice_with(schem, origin, protocol, &mut Budget::new(std::time::Duration::from_secs(3600), usize::MAX))
+}
+
+/// Like [`slice`], under a time and memory [`Budget`] (progress lines every 10 s on stderr).
+pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, budget: &mut Budget) -> Result<Plan, String> {
     TIMES.with(|t| t.set(Times::default()));
     let t_tour = std::time::Instant::now();
     let order = crate::tour::tour_order(schem);
@@ -133,6 +140,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     loop {
     let mut deferred: Vec<usize> = Vec::new();
     for &i in &todo {
+        budget.check(if last_pass { "deferred blocks" } else { "placing blocks" }, &|| format!("block {i}/{} ({} placed, {} steps)", order.len(), count, rec.steps.len()))?;
         let b = order[i];
         let world = positions[i];
         let state = b.state_string();
@@ -267,6 +275,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     let t_clean = std::time::Instant::now();
     let left = site.finish(&mut rec).map_err(|e| e.to_string())?;
     add(|_| {}, t_clean, |t| &mut t.cleanup);
+    budget.check("cleanup", &|| format!("{} steps", rec.steps.len()))?;
     if left > 0 {
         return Err(format!("{left} scaffold pillar(s) could not be removed"));
     }

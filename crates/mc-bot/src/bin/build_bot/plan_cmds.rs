@@ -37,7 +37,11 @@ pub fn slice_cmd(args: &[String]) {
         .unwrap_or_else(|e| fail(e.to_string()));
     let schem = load(src);
     let t = Instant::now();
-    let plan = slice::slice(&schem, origin, version.protocol).unwrap_or_else(|e| fail(e));
+    mc_bot::guard::lower_priority();
+    let secs: u64 = flag(args, "--time-limit").and_then(|v| v.parse().ok()).unwrap_or(180);
+    let mb: usize = flag(args, "--memory-limit-mb").and_then(|v| v.parse().ok()).unwrap_or(2048);
+    let mut budget = mc_bot::guard::Budget::new(std::time::Duration::from_secs(secs), mb << 20);
+    let plan = slice::slice_with(&schem, origin, version.protocol, &mut budget).unwrap_or_else(|e| fail(e));
     std::fs::write(&out, plan.to_text()).unwrap_or_else(|e| fail(format!("{out}: {e}")));
     println!("{}", tr!("sliced '{}' in {:.1}s -> {}", "'{}' 슬라이스 {:.1}초 -> {}", schem.name, t.elapsed().as_secs_f64(), out));
     let t = slice::last_times();
@@ -97,6 +101,7 @@ pub fn run_cmd(args: &[String]) {
         (None, Some(ms)) => std::time::Duration::from_millis(ms.parse().unwrap_or(25)),
         _ => std::time::Duration::from_millis(25),
     };
+    mc_bot::guard::lower_priority();
     let (mut bot, _) = PlayClient::join_v(target, &host, port, &name, plan.header.protocol)
         .unwrap_or_else(|e| fail(format!("{target}: {e}")));
     if let Some(r) = &bot.kicked {

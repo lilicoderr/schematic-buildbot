@@ -6,6 +6,7 @@ pub mod blocks;
 pub mod builder;
 pub mod exec;
 pub mod exec_repair;
+pub mod guard;
 pub mod i18n;
 pub mod ids;
 pub mod litematic;
