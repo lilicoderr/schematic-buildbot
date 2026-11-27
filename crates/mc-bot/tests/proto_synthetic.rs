@@ -1,7 +1,8 @@
 //! Synthetic packets against the play client (docs/RE/protocol.md, movement.md).
 
 use mc_bot::builder::PlayClient;
-use mc_bot::ids;
+use mc_bot::data::Packets;
+use mc_bot::version;
 use mc_proto::buf::PacketBuf;
 use mc_proto::frame::{try_parse_frame, write_frame};
 use std::io::{Read, Write};
@@ -12,6 +13,11 @@ use std::time::Duration;
 const PONG: i32 = 39;
 /// serverbound player_abilities: the only way to tell the server we are flying.
 const ABILITIES: i32 = 0x23;
+
+/// Packet ids of protocol 767.
+fn ids() -> &'static Packets {
+    version::DEFAULT.packets()
+}
 
 fn read(stream: &mut TcpStream, inbox: &mut Vec<u8>) -> Option<(i32, PacketBuf)> {
     let mut chunk = [0u8; 4096];
@@ -58,10 +64,10 @@ fn server(script: Vec<(i32, PacketBuf)>) -> (u16, JoinHandle<Received>) {
         ok.write_uuid(1);
         ok.write_string("Mock");
         ok.write_varint(0);
-        send(&mut s, ids::CB_LOGIN_SUCCESS, &ok);
+        send(&mut s, ids().cb_login_login_finished, &ok);
         read(&mut s, &mut inbox).expect("login ack");
         read(&mut s, &mut inbox).expect("client information");
-        send(&mut s, ids::CB_CONFIG_FINISH, &PacketBuf::new());
+        send(&mut s, ids().cb_config_finish_configuration, &PacketBuf::new());
         read(&mut s, &mut inbox).expect("finish ack");
         for (id, b) in &script {
             send(&mut s, *id, b);
@@ -88,11 +94,11 @@ fn each_server_packet_gets_exactly_its_answer_and_nothing_else() {
     let mut batch = PacketBuf::new();
     batch.write_varint(9);
     let (port, server) = server(vec![
-        (ids::CB_PLAY_SYNC_POS, teleport(64.0, 7)),
-        (ids::CB_PLAY_KEEPALIVE, keep.clone()),
-        (ids::CB_PLAY_PING, ping.clone()),
-        (ids::CB_PLAY_CHUNK_BATCH_FINISHED, batch),
-        (ids::CB_PLAY_SYNC_POS, teleport(65.0, 8)),
+        (ids().cb_play_player_position, teleport(64.0, 7)),
+        (ids().cb_play_keep_alive, keep.clone()),
+        (ids().cb_play_ping, ping.clone()),
+        (ids().cb_play_chunk_batch_finished, batch),
+        (ids().cb_play_player_position, teleport(65.0, 8)),
     ]);
     let mut bot = join(port);
     bot.idle(Duration::from_millis(400)).unwrap();
@@ -103,13 +109,13 @@ fn each_server_packet_gets_exactly_its_answer_and_nothing_else() {
     assert_eq!(
         kinds,
         [
-            ids::SB_PLAY_CONFIRM_TELEPORT,
-            ids::SB_PLAY_SET_POS_ROT,
-            ids::SB_PLAY_KEEPALIVE,
+            ids().sb_play_accept_teleportation,
+            ids().sb_play_move_player_pos_rot,
+            ids().sb_play_keep_alive,
             PONG,
-            ids::SB_PLAY_CHUNK_BATCH_RECEIVED,
-            ids::SB_PLAY_CONFIRM_TELEPORT,
-            ids::SB_PLAY_SET_POS_ROT,
+            ids().sb_play_chunk_batch_received,
+            ids().sb_play_accept_teleportation,
+            ids().sb_play_move_player_pos_rot,
         ]
     );
     assert!(!kinds.contains(&ABILITIES));
@@ -122,7 +128,7 @@ fn each_server_packet_gets_exactly_its_answer_and_nothing_else() {
 
 #[test]
 fn a_refused_pillar_block_is_never_stood_on() {
-    let (port, server) = server(vec![(ids::CB_PLAY_SYNC_POS, teleport(64.0, 1))]);
+    let (port, server) = server(vec![(ids().cb_play_player_position, teleport(64.0, 1))]);
     let mut bot = join(port);
     bot.place_delay = Duration::from_millis(5);
     let err = bot.pillar_up((0, 64, 0), 1, 1).unwrap_err();
@@ -130,6 +136,6 @@ fn a_refused_pillar_block_is_never_stood_on() {
     assert_eq!(bot.feet.y, 64.0);
     drop(bot);
     let got = server.join().unwrap();
-    let last = got.iter().rev().find(|p| p.0 == ids::SB_PLAY_SET_POS).expect("a final position");
+    let last = got.iter().rev().find(|p| p.0 == ids().sb_play_move_player_pos).expect("a final position");
     assert_eq!(last.1[8..16], 64.0f64.to_be_bytes(), "ends on the floor");
 }
