@@ -1,6 +1,6 @@
 //! Play-state client and building logic.
 //!
-//! Core design (avoids fly/speed kicks):
+//! Core design (ground only: no flying, no hovering, no speeding):
 //!  · Always stand on the ground (`on_ground = true`) and move in small steps below walking speed.
 //!  · Answer keepalive and teleport sync immediately.
 //!  · Blocks are placed by clicking a face of a supported neighbour (Use Item On);
@@ -20,9 +20,19 @@ use std::time::{Duration, Instant};
 
 /// Ground speed per 20 Hz tick: 4.2 blocks/s, just under vanilla walking speed (4.317).
 const WALK_STEP: f64 = 0.21;
-/// Flight speed per tick: 9 blocks/s, under the creative flying speed (10.9).
-const FLY_STEP: f64 = 0.45;
 const TICK: Duration = Duration::from_millis(50);
+
+/// One walking step from `feet` toward `target`: horizontal only, at most [`WALK_STEP`], and
+/// never any change in height, so a walking bot always stays on the surface it stands on.
+pub fn walk_step(feet: Vec3, target: Vec3) -> Vec3 {
+    let (dx, dz) = (target.x - feet.x, target.z - feet.z);
+    let d = dx.hypot(dz);
+    if d < 1e-9 {
+        return feet;
+    }
+    let s = d.min(WALK_STEP);
+    Vec3::new(feet.x + dx / d * s, feet.y, feet.z + dz / d * s)
+}
 
 pub struct PlayClient {
     pub conn: Connection,
@@ -36,9 +46,6 @@ pub struct PlayClient {
     pub place_delay: Duration,
     /// Last state the server reported per block position (see [`BlockLog`]).
     pub blocks: BlockLog,
-    /// The server granted creative flight (abilities packet).
-    pub may_fly: bool,
-    pub flying: bool,
     /// Teleports forced by the server (a sign we are pushing into something).
     pub teleports: u32,
     next_tick: Instant,
@@ -62,8 +69,6 @@ impl PlayClient {
             kicked: None,
             place_delay: Duration::from_millis(25),
             blocks: BlockLog::default(),
-            may_fly: false,
-            flying: false,
             teleports: 0,
             next_tick: Instant::now(),
         };
@@ -116,11 +121,7 @@ impl PlayClient {
                         self.conn.send(ids::SB_PLAY_CONFIRM_TELEPORT, r.as_slice())?;
                         self.teleports += 1;
                         // After confirming, report the current position
-                        self.send_pos_look(!self.flying)?;
-                    }
-                    ids::CB_PLAY_ABILITIES => {
-                        let flags = body.read_i8().unwrap_or(0);
-                        self.may_fly = flags & 0x04 != 0;
+                        self.send_pos_look(true)?;
                     }
                     ids::CB_PLAY_BLOCK_CHANGE => {
                         if let Some((pos, state)) = blocklog::parse_block_change(&mut body) {
@@ -215,13 +216,8 @@ impl PlayClient {
                     break;
                 }
             }
-            let dx = target.x - self.feet.x;
-            let dz = target.z - self.feet.z;
-            let d = (dx * dx + dz * dz).sqrt();
-            let s = d.min(WALK_STEP);
-            self.feet.x += dx / d * s;
-            self.feet.z += dz / d * s;
-            self.send_pos(!self.flying)?;
+            self.feet = walk_step(self.feet, target);
+            self.send_pos(true)?;
             self.tick()?;
             if self.kicked.is_some() {
                 break;
@@ -230,37 +226,26 @@ impl PlayClient {
         Ok(())
     }
 
-    /// Turn creative flight on or off. Returns `false` when the server did not grant flight.
-    pub fn set_flying(&mut self, on: bool) -> io::Result<bool> {
-        if on && !self.may_fly {
-            return Ok(false);
-        }
-        let mut b = PacketBuf::new();
-        b.write_i8(if on { 0x02 } else { 0 });
-        self.conn.send(ids::SB_PLAY_ABILITIES, b.as_slice())?;
-        self.flying = on;
-        Ok(true)
-    }
-
-    /// Fly in a straight line to `target` (3D), one fixed step per tick. Gives up after the
-    /// server teleports us back several times (something solid is in the way).
-    pub fn fly_to(&mut self, target: Vec3) -> io::Result<()> {
+    /// Settle onto the ground below. A bot that joins in mid-air (the server restores the last saved
+    /// position, e.g. after an interrupted build) would otherwise take that height as the ground level
+    /// and build the whole structure floating. We lower ourselves in small steps until the server
+    /// bounces us off the floor with a teleport, which leaves `feet` on the surface.
+    /// Returns the number of blocks descended.
+    pub fn land(&mut self) -> io::Result<f64> {
+        const STEP: f64 = 0.25;
+        let start_y = self.feet.y;
         let teleports_at_start = self.teleports;
-        let mut guard = 0;
-        while self.feet.dist(target) > 0.05 && guard < 2000 && self.teleports - teleports_at_start < 3 {
-            guard += 1;
-            let d = self.feet.dist(target);
-            let s = d.min(FLY_STEP) / d;
-            self.feet.x += (target.x - self.feet.x) * s;
-            self.feet.y += (target.y - self.feet.y) * s;
-            self.feet.z += (target.z - self.feet.z) * s;
+        for _ in 0..1600 {
+            if self.teleports != teleports_at_start || self.kicked.is_some() {
+                break;
+            }
+            self.feet.y -= STEP;
             self.send_pos(false)?;
             self.tick()?;
-            if self.kicked.is_some() {
-                break;
-            }
         }
-        Ok(())
+        self.send_pos(true)?;
+        self.idle(Duration::from_millis(100))?;
+        Ok(start_y - self.feet.y)
     }
 
     /// Walk along a precomputed route of ground cells (see [`crate::path::find_path`]).
@@ -326,7 +311,7 @@ impl PlayClient {
         self.yaw = plan.yaw.unwrap_or(look_yaw);
         self.pitch = pitch;
         self.set_creative_held(item_id)?;
-        self.send_pos_look(!self.flying)?;
+        self.send_pos_look(true)?;
         for click in &plan.clicks {
             self.use_item_on(click.support, click.face, click.cursor)?;
             self.idle(self.place_delay)?;
@@ -335,5 +320,48 @@ impl PlayClient {
             }
         }
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The block under the player's feet is solid (flat ground: every cell below `ground_y`).
+    fn supported(p: Vec3, ground_y: i32) -> bool {
+        let solid = |_x: i32, y: i32, _z: i32| y < ground_y;
+        solid(p.x.floor() as i32, p.y.floor() as i32 - 1, p.z.floor() as i32)
+    }
+
+    #[test]
+    fn supported_detects_air_standing() {
+        assert!(supported(Vec3::new(0.5, -60.0, 0.5), -60));
+        assert!(!supported(Vec3::new(0.5, -58.0, 0.5), -60));
+    }
+
+    #[test]
+    fn every_walking_position_stands_on_solid_ground() {
+        let ground_y = -60;
+        let route = [(0.5, 0.5), (12.5, 0.5), (12.5, -9.5), (-7.5, 4.5)];
+        let mut feet = Vec3::new(route[0].0, ground_y as f64, route[0].1);
+        for &(tx, tz) in &route[1..] {
+            let target = Vec3::new(tx, ground_y as f64, tz);
+            let mut guard = 0;
+            while feet.horiz_dist(target) > 0.05 && guard < 1000 {
+                let next = walk_step(feet, target);
+                assert!(feet.horiz_dist(next) <= WALK_STEP + 1e-9, "no speeding");
+                assert_eq!(next.y, feet.y, "walking never changes height");
+                assert!(supported(next, ground_y), "no air-standing at {next:?}");
+                feet = next;
+                guard += 1;
+            }
+            assert!(guard < 1000, "walk_step must converge");
+        }
+    }
+
+    #[test]
+    fn walk_step_is_idempotent_at_the_target() {
+        let t = Vec3::new(3.5, -60.0, 3.5);
+        assert_eq!(walk_step(t, t), t);
     }
 }

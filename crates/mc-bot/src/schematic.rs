@@ -61,9 +61,9 @@ impl Block {
 }
 
 /// Split `minecraft:oak_stairs[facing=east]` into (`oak_stairs`, {facing: east}).
-/// Side length of the square tiles a layer is swept in. A bot standing in the middle of a tile
-/// reaches all of it, so it only moves when it changes tile.
-pub const SWEEP_TILE: i32 = 8;
+/// Side length of the square tiles a layer is swept in. Consecutive blocks stay within a few
+/// cells of each other, so the walking bot rarely has to move between placements.
+pub const SWEEP_TILE: i32 = 5;
 
 /// Position key that orders one layer as a boustrophedon over `SWEEP_TILE` tiles, with
 /// serpentine rows inside each tile. Consecutive blocks are almost always neighbours, so the

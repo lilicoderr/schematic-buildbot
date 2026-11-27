@@ -52,8 +52,6 @@ OPTIONS:
   --delay-ms <N>       pause after each placement (default 25)
   --rate <N>           cap placements per second (overrides --delay-ms)
   --version <V>        Minecraft version to announce (default 1.21.1)
-  --fly                hover above the build with creative flight (reaches roofs, tall towers
-                       and floor interiors); default is ground-only walking
   --verify             re-place blocks the server did not confirm (a report is always printed)
   --resume             continue an interrupted build from the progress file
   --progress-file <F>  progress file path (default .buildbot-progress)
@@ -76,8 +74,6 @@ build-bot — 설계도를 Minecraft 오프라인 서버에 건축
   --delay-ms <N>       설치마다 대기(기본 25)
   --rate <N>           초당 설치 수 상한 (--delay-ms 보다 우선)
   --version <V>        알릴 마인크래프트 버전 (기본 1.21.1)
-  --fly                크리에이티브 비행으로 건물 위에서 작업 (지붕·높은 탑·바닥 안쪽까지 도달).
-                       기본은 지면 보행 전용
   --verify             서버가 확인하지 않은 블록을 다시 설치 (확인 보고는 항상 출력)
   --resume             중단된 건축을 진행 파일에서 이어서 진행
   --progress-file <F>  진행 파일 경로 (기본 .buildbot-progress)
@@ -97,7 +93,6 @@ struct Opts {
     rate: Option<f64>,
     version: Option<String>,
     resume: bool,
-    fly: bool,
     verify: bool,
     progress_file: Option<String>,
     lang: Option<String>,
@@ -115,7 +110,6 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "-h" | "--help" => o.help = true,
             "--dry-run" | "--validate" => o.dry_run = true,
             "--resume" => o.resume = true,
-            "--fly" => o.fly = true,
             "--verify" => o.verify = true,
             "--delay-ms" => {
                 o.delay_ms = Some(value("--delay-ms")?.parse().map_err(|_| tr!("--delay-ms must be a number", "--delay-ms 는 숫자여야 합니다"))?)
@@ -336,6 +330,10 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
         return Ok(());
     }
     bot.place_delay = place_delay(opts);
+    let dropped = bot.land()?;
+    if dropped > 0.5 {
+        println!("{}", tr!("joined {:.1} blocks above the ground, landed first", "지면보다 {:.1}칸 위에서 접속해 먼저 착지했습니다", dropped));
+    }
     let spawn = bot.feet;
     println!("{}", tr!("spawn: ({:.1}, {:.1}, {:.1})", "스폰 위치: ({:.1}, {:.1}, {:.1})", spawn.x, spawn.y, spawn.z));
 
@@ -365,17 +363,6 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
     let occupied: HashSet<(i32, i32, i32)> = order.iter().map(|b| at(b)).map(|p| (p.x, p.y, p.z)).collect();
     // Blocks from an earlier run already exist in the world.
     let mut placed: HashSet<BlockPos> = order.iter().take(start).map(|b| at(b)).collect();
-
-    let fly = if opts.fly {
-        bot.idle(Duration::from_millis(300))?; // let the abilities packet arrive
-        let granted = bot.set_flying(true)?;
-        if !granted {
-            println!("{}", tr!("the server did not grant flight, staying on the ground", "서버가 비행을 허용하지 않아 지면 모드로 진행합니다"));
-        }
-        granted
-    } else {
-        false
-    };
 
     let mut stats = Stats::default();
     let started = Instant::now();
@@ -419,8 +406,13 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
             }
             Action::Place(p) => p,
         };
-        move_into_reach(&mut bot, world, origin.y, &occupied, fly)?;
-        if bot.place(world, item, &plan)? {
+        let t0 = Instant::now();
+        move_into_reach(&mut bot, world, origin.y, &occupied)?;
+        let t1 = Instant::now();
+        let ok = bot.place(world, item, &plan)?;
+        stats.moving += t1 - t0;
+        stats.placing += t1.elapsed();
+        if ok {
             stats.done += 1;
             placed.insert(world);
             attempted.push((Block { pos: world, ..(*b).clone() }, item));
@@ -432,7 +424,7 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
 
     bot.idle(Duration::from_millis(500))?;
     if opts.verify {
-        verify_pass(&mut bot, &attempted, &placed, origin.y, &occupied, fly)?;
+        verify_pass(&mut bot, &attempted, &placed, origin.y, &occupied)?;
     }
     stats.confirmed = attempted.iter().filter(|(b, _)| bot.blocks.is_confirmed(b.pos)).count();
     stats.attempted = attempted.len();
@@ -469,6 +461,8 @@ struct Stats {
     confirmed: usize,
     attempted: usize,
     elapsed: Duration,
+    moving: Duration,
+    placing: Duration,
 }
 
 impl Stats {
@@ -504,6 +498,15 @@ impl Stats {
                 self.done as f64 / self.elapsed.as_secs_f64().max(0.001)
             )
         );
+        println!(
+            "{}",
+            tr!(
+                "time split: moving {:.0}s, placing {:.0}s",
+                "시간 배분: 이동 {:.0}초, 설치 {:.0}초",
+                self.moving.as_secs_f64(),
+                self.placing.as_secs_f64()
+            )
+        );
         if self.default_state > 0 {
             println!(
                 "{}",
@@ -529,31 +532,11 @@ fn fmt_duration(secs: f64) -> String {
     }
 }
 
-/// Where to hover to place `world` from above: two blocks over the target, led two blocks
-/// ahead of the direction of travel so the next few blocks of the sweep stay in reach.
-fn hover_spot(cur: Vec3, world: BlockPos) -> Vec3 {
-    const LEAD: f64 = 2.0;
-    let (dx, dz) = (world.x as f64 + 0.5 - cur.x, world.z as f64 + 0.5 - cur.z);
-    let d = dx.hypot(dz);
-    let (ux, uz) = if d > 1e-6 { (dx / d, dz / d) } else { (0.0, 0.0) };
-    Vec3::new(world.x as f64 + 0.5 + ux * LEAD, world.y as f64 + 2.0, world.z as f64 + 0.5 + uz * LEAD)
-}
-
-/// Bring the bot to a spot from which `world` can be placed: hover above it in fly mode
-/// (everything already built lies at or below the current layer, so the air above is free),
-/// otherwise walk around the structure on the ground.
-fn move_into_reach(
-    bot: &mut PlayClient,
-    world: BlockPos,
-    feet_y: i32,
-    occupied: &HashSet<(i32, i32, i32)>,
-    fly: bool,
-) -> io::Result<()> {
-    if fly {
-        if !within_reach(bot.feet, world) || bot.feet.y < world.y as f64 + 1.0 {
-            bot.fly_to(hover_spot(bot.feet, world))?;
-        }
-    } else if !within_reach(bot.feet, world) {
+/// Walk around the structure to a ground cell from which `world` is in reach. Blocks that no
+/// ground cell can reach (floor interiors, roofs, tall towers) are left alone and counted as out
+/// of reach: the bot never flies or hovers.
+fn move_into_reach(bot: &mut PlayClient, world: BlockPos, feet_y: i32, occupied: &HashSet<(i32, i32, i32)>) -> io::Result<()> {
+    if !within_reach(bot.feet, world) {
         if let Some(route) = route_to_reach(bot.feet, world, feet_y, occupied) {
             bot.walk_route(&route)?;
         }
@@ -568,7 +551,6 @@ fn verify_pass(
     placed: &HashSet<BlockPos>,
     feet_y: i32,
     occupied: &HashSet<(i32, i32, i32)>,
-    fly: bool,
 ) -> io::Result<()> {
     for round in 1..=2 {
         let todo: Vec<&(Block, i32)> = attempted.iter().filter(|(b, _)| !bot.blocks.is_confirmed(b.pos)).collect();
@@ -580,7 +562,7 @@ fn verify_pass(
             bot.blocks.forget(b.pos);
             let solid = |p: BlockPos| p.y < feet_y || placed.contains(&p);
             if let Action::Place(plan) = placement::plan(b, solid) {
-                move_into_reach(bot, b.pos, feet_y, occupied, fly)?;
+                move_into_reach(bot, b.pos, feet_y, occupied)?;
                 bot.place(b.pos, *item, &plan)?;
             }
             if bot.kicked.is_some() {
@@ -638,21 +620,11 @@ mod tests {
     }
 
     #[test]
-    fn hover_spot_is_above_the_block_and_in_reach() {
-        let target = BlockPos::new(10, 5, 10);
-        for cur in [Vec3::new(0.5, 3.0, 0.5), Vec3::new(10.5, 9.0, 10.5), Vec3::new(30.0, 5.0, -4.0)] {
-            let spot = hover_spot(cur, target);
-            assert_eq!(spot.y, 7.0, "two blocks above the target");
-            assert!(within_reach(spot, target), "{spot:?}");
-            assert!((spot.x - 10.5).hypot(spot.z - 10.5) <= 2.0 + 1e-9);
-        }
-    }
-
-    #[test]
-    fn parses_fly_and_verify() {
-        let a: Vec<String> = ["x", "--fly", "--verify"].map(String::from).to_vec();
+    fn parses_verify() {
+        let a: Vec<String> = ["x", "--verify"].map(String::from).to_vec();
         let o = parse_opts(&a).unwrap();
-        assert!(o.fly && o.verify);
+        assert!(o.verify);
+        assert!(parse_opts(&["--fly".to_string()]).is_err(), "flying is not supported");
     }
 
     #[test]
