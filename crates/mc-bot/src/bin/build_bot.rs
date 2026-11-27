@@ -380,6 +380,8 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
     };
 
     let positions: Vec<BlockPos> = order.iter().map(|b| at(b)).collect();
+    let mut window_start = Instant::now();
+    let mut window_timing = site.timing;
     let mut processed = start;
     for b in order.iter().skip(start) {
         if bot.kicked.is_some() {
@@ -400,6 +402,24 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
                     processed, total, stats.done, rate, fmt_duration(eta)
                 )
             );
+            let (now, w) = (site.timing, window_start.elapsed().as_secs_f64().max(0.001));
+            let d = |a: Duration, b: Duration| (a - b).as_secs_f64();
+            eprintln!(
+                "{}",
+                tr!(
+                    "     last 100: {:.1} blocks/s | walk {:.0}% pillar {:.0}% search {:.1}s | {} routes, {} steps, {} pillars",
+                    "     최근 100: {:.1}블록/초 | 이동 {:.0}% 기둥 {:.0}% 탐색 {:.1}초 | 경로 {}회, {}걸음, 기둥 {}개",
+                    100.0 / w,
+                    100.0 * d(now.walk, window_timing.walk) / w,
+                    100.0 * d(now.pillar, window_timing.pillar) / w,
+                    d(now.search, window_timing.search),
+                    now.routes - window_timing.routes,
+                    now.steps - window_timing.steps,
+                    now.pillars_built - window_timing.pillars_built
+                )
+            );
+            window_start = Instant::now();
+            window_timing = now;
         }
         let world = at(b);
         let Some(item) = blocks::item_id(&b.name) else {
@@ -443,6 +463,15 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
     stats.attempted = attempted.len();
     stats.elapsed = started.elapsed();
     stats.print();
+    let t = site.timing;
+    println!(
+        "{}",
+        tr!(
+            "walking {:.0}s ({} routes, {} steps) | pillars {:.0}s ({} built, {} removed) | path search {:.1}s",
+            "이동 {:.0}초 (경로 {}회, {}걸음) | 기둥 {:.0}초 (설치 {}, 제거 {}) | 경로 탐색 {:.1}초",
+            t.walk.as_secs_f64(), t.routes, t.steps, t.pillar.as_secs_f64(), t.pillars_built, t.pillars_removed, t.search.as_secs_f64()
+        )
+    );
     match &bot.kicked {
         Some(r) => {
             save(processed.saturating_sub(1));

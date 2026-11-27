@@ -11,6 +11,7 @@ use crate::nav::feet_cell;
 use crate::world::{within_reach, BlockPos};
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::time::{Duration, Instant};
 
 /// Tallest pillar planned in one go.
 pub const MAX_HEIGHT: i32 = 6;
@@ -101,11 +102,24 @@ fn column_free(t: &Terrain, p: &Pillar) -> bool {
 pub struct Site {
     pub terrain: Terrain,
     pillars: Vec<Pillar>,
+    pub timing: Timing,
+}
+
+/// Where the time went (cumulative); the caller diffs snapshots per window.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Timing {
+    pub search: Duration,
+    pub walk: Duration,
+    pub pillar: Duration,
+    pub routes: u32,
+    pub steps: u32,
+    pub pillars_built: u32,
+    pub pillars_removed: u32,
 }
 
 impl Site {
     pub fn new(terrain: Terrain) -> Self {
-        Site { terrain, pillars: Vec::new() }
+        Site { terrain, pillars: Vec::new(), timing: Timing::default() }
     }
 
     /// Walk to the top of pillar `i`, dig it away, drop to its base. False if the top is unreachable.
@@ -115,13 +129,16 @@ impl Site {
         if feet_cell(bot.feet) != top {
             let route = self.terrain.route(feet_cell(bot.feet), &|c| c == top, 40, 60_000);
             if let Some(route) = route {
-                bot.walk_cells(&route)?;
+                self.walk(bot, &route)?;
             }
         }
         if feet_cell(bot.feet) != top || bot.kicked.is_some() {
             return Ok(false);
         }
+        let t = Instant::now();
         bot.pillar_down(p.base, p.height)?;
+        self.timing.pillar += t.elapsed();
+        self.timing.pillars_removed += 1;
         for c in p.cells() {
             self.terrain.remove_block(c);
         }
@@ -137,6 +154,16 @@ impl Site {
             }
         }
         Ok(self.pillars.len())
+    }
+
+    /// Walk a route, counting steps and time.
+    fn walk(&mut self, bot: &mut PlayClient, route: &[Cell]) -> io::Result<()> {
+        let t = Instant::now();
+        self.timing.routes += 1;
+        self.timing.steps += route.len().saturating_sub(1) as u32;
+        let r = bot.walk_cells(route);
+        self.timing.walk += t.elapsed();
+        r
     }
 
     fn in_scaffold(&self, t: BlockPos) -> Option<usize> {
@@ -171,14 +198,17 @@ impl Site {
             self.remove_pillar(bot, i)?;
             return self.approach(bot, upcoming);
         }
-        if let Some((route, pillar)) = plan_pillar(&self.terrain, start, upcoming, 24, 40_000) {
-            bot.walk_cells(&route)?;
+        let t = Instant::now();
+        let planned = plan_pillar(&self.terrain, start, upcoming, 24, 40_000);
+        self.timing.search += t.elapsed();
+        if let Some((route, pillar)) = planned {
+            self.walk(bot, &route)?;
             self.build(bot, pillar, item)?;
         } else if let Some(pillar) = self.plan_escape(start, upcoming) {
             self.build(bot, pillar, item)?;
             let start = feet_cell(bot.feet);
             if let Some(route) = self.terrain.route_for_run(start, upcoming, 24, 40_000) {
-                bot.walk_cells(&route)?;
+                self.walk(bot, &route)?;
             }
         }
         Ok(())
@@ -188,7 +218,10 @@ impl Site {
         if bot.kicked.is_some() || feet_cell(bot.feet) != pillar.base {
             return Ok(());
         }
+        let t = Instant::now();
         bot.pillar_up(pillar.base, pillar.height, item)?;
+        self.timing.pillar += t.elapsed();
+        self.timing.pillars_built += 1;
         for c in pillar.cells() {
             self.terrain.add_block(c, true);
         }
