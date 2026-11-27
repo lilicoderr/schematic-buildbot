@@ -134,6 +134,10 @@ impl PlayClient {
                         // After confirming, report the current position
                         self.send_pos_look(true)?;
                     }
+                    ids::CB_PLAY_CHUNK_BATCH_FINISHED => {
+                        // the server waits for this answer before it sends the next batch
+                        self.conn.send(ids::SB_PLAY_CHUNK_BATCH_RECEIVED, proto::chunk_batch_received(9.0).as_slice())?;
+                    }
                     ids::CB_PLAY_BLOCK_CHANGE => {
                         if let Some((pos, state)) = blocklog::parse_block_change(&mut body) {
                             self.blocks.record(pos, state);

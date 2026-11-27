@@ -36,7 +36,8 @@ pub const CB_CONFIG_KNOWN_PACKS: i32 = 0x0E;
 pub const SB_PLAY_KEEPALIVE: i32 = 0x18;
 pub const SB_PLAY_CHAT_MESSAGE: i32 = 0x06;
 pub const SB_PLAY_CONFIRM_TELEPORT: i32 = 0x00;
-pub const SB_PLAY_PLAYER_LOADED: i32 = 0x2A; // 1.21.x
+// 0x2A is rename_item in 1.21.1 (there is no player_loaded packet); never send it. See docs/RE/protocol.md.
+pub const SB_PLAY_CHUNK_BATCH_RECEIVED: i32 = 0x08;
 pub const SB_PLAY_SET_POS: i32 = 0x1A; // Set Player Position
 pub const SB_PLAY_SET_POS_ROT: i32 = 0x1B; // Set Player Position and Rotation
 pub const SB_PLAY_SET_ROT: i32 = 0x1C;
@@ -57,6 +58,7 @@ pub const CB_PLAY_SYNC_POS: i32 = 0x40; // Synchronize Player Position (teleport
 pub const CB_PLAY_DISCONNECT: i32 = 0x1D;
 pub const CB_PLAY_CHUNK: i32 = 0x27; // Chunk Data and Light (map_chunk)
 pub const CB_PLAY_BLOCK_CHANGE: i32 = 0x09;
+pub const CB_PLAY_CHUNK_BATCH_FINISHED: i32 = 0x0C;
 pub const CB_PLAY_MULTI_BLOCK_CHANGE: i32 = 0x49; // section blocks update
 pub const CB_PLAY_OPEN_SCREEN: i32 = 0x33;
 pub const CB_PLAY_CONTAINER_CONTENT: i32 = 0x13; // window_items

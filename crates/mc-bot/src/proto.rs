@@ -91,6 +91,7 @@ pub fn login_offline_v(
                 // Properties after this are ignored
                 conn.send(ids::SB_LOGIN_ACK, &[])?; // Login Acknowledged → Configuration
                 conn.state = State::Configuration;
+                conn.send(ids::SB_CONFIG_CLIENT_INFO, client_information(VIEW_DISTANCE).as_slice())?;
                 break;
             }
             ids::CB_LOGIN_ENCRYPTION_REQUEST => {
@@ -144,6 +145,32 @@ pub fn login_offline_v(
     }
 
     Ok((conn, join))
+}
+
+/// View distance the bot announces (chunks); the server clamps it to its own limit.
+pub const VIEW_DISTANCE: u8 = 8;
+
+/// Serverbound client_information (configuration, id 0): without it the server assumes view
+/// distance 2 and en_us (docs/RE/protocol.md). Field order from the packet codec.
+pub fn client_information(view_distance: u8) -> PacketBuf {
+    let mut b = PacketBuf::new();
+    b.write_string("en_us");
+    b.write_u8(view_distance);
+    b.write_varint(0); // chat visibility: full
+    b.write_bool(true); // chat colors
+    b.write_u8(0x7f); // all skin parts
+    b.write_varint(1); // main hand: right
+    b.write_bool(false); // text filtering
+    b.write_bool(true); // allows listing
+    b
+}
+
+/// Serverbound chunk_batch_received (play id 8): the server sends the next chunk batch only after
+/// this answer to every chunk_batch_finished.
+pub fn chunk_batch_received(chunks_per_tick: f32) -> PacketBuf {
+    let mut b = PacketBuf::new();
+    b.write_f32(chunks_per_tick);
+    b
 }
 
 /// Offline player UUID = MD5("OfflinePlayer:<name>") turned into a v3 UUID
@@ -222,6 +249,17 @@ fn md5(input: &[u8]) -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn client_information_layout_matches_the_codec() {
+        // "en_us", view distance 8, chat visibility 0, colors on, all skin parts, right hand, no filtering, listing on
+        assert_eq!(client_information(8).as_slice(), [5, b'e', b'n', b'_', b'u', b's', 8, 0, 1, 0x7f, 1, 0, 1]);
+    }
+
+    #[test]
+    fn chunk_batch_ack_is_one_float() {
+        assert_eq!(chunk_batch_received(9.0).as_slice(), 9.0f32.to_be_bytes());
+    }
+
     #[test]
     fn md5_known() {
         // RFC 1321 test vectors
