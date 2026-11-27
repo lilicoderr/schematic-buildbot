@@ -1,7 +1,6 @@
 //! mc-bot — a packet analyzer and schematic build bot for offline-mode Minecraft servers.
 
 pub mod blocklog;
-pub mod bridge;
 pub mod blocks;
 pub mod builder;
 pub mod exec;
@@ -11,6 +10,7 @@ pub mod i18n;
 pub mod ids;
 pub mod litematic;
 pub mod nav;
+pub mod navplan;
 pub mod nbt;
 pub mod net;
 pub mod path;

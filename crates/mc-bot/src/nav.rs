@@ -68,7 +68,7 @@ impl Terrain {
         c.1 < self.ground_y || self.body.contains(&c)
     }
 
-    fn carries(&self, c: Cell) -> bool {
+    pub(crate) fn carries(&self, c: Cell) -> bool {
         c.1 < self.ground_y || self.support.contains(&c)
     }
 

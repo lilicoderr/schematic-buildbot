@@ -24,6 +24,8 @@ pub const LOOKAHEAD: usize = 96;
 pub const CHECKPOINT_EVERY: usize = 250;
 /// A pocket smaller than this many standing cells (no way to the open ground) counts as sealed.
 const SEAL_CAP: usize = 20_000;
+/// This many blocks in a row without a standing spot means the bot is stuck: stop and say where.
+const STALL_LIMIT: usize = 40;
 
 /// Where planning time went in the last `slice` call on this thread (printed by the CLI; kept out
 /// of the plan so plans stay byte-identical).
@@ -77,20 +79,15 @@ impl Mover for Recorder {
         }
         Ok(())
     }
-    fn pillar_up(&mut self, base: Cell, height: i32, _item: i32) -> io::Result<()> {
-        for k in 0..height {
-            self.steps.push(Step::Pillar((base.0, base.1 + k, base.2)));
-            self.alive.insert(BlockPos::new(base.0, base.1 + k, base.2));
-        }
-        self.feet = cell_feet((base.0, base.1 + height, base.2));
+    fn pillar_up(&mut self, base: Cell, _item: i32) -> io::Result<()> {
+        self.steps.push(Step::Pillar(base));
+        self.alive.insert(BlockPos::new(base.0, base.1, base.2));
+        self.feet = cell_feet((base.0, base.1 + 1, base.2));
         Ok(())
     }
-    fn pillar_down(&mut self, base: Cell, height: i32) -> io::Result<()> {
-        for k in (0..height).rev() {
-            self.alive.remove(&BlockPos::new(base.0, base.1 + k, base.2));
-            self.steps.push(Step::Break(BlockPos::new(base.0, base.1 + k, base.2)));
-        }
-        self.feet = cell_feet(base);
+    fn dig_down(&mut self, floor: BlockPos, land_y: i32) -> io::Result<()> {
+        self.break_block(floor)?;
+        self.feet = cell_feet((floor.x, land_y, floor.z));
         Ok(())
     }
     fn break_block(&mut self, pos: BlockPos) -> io::Result<()> {
@@ -133,6 +130,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     let (mut count, mut hash, mut since_cp, mut cp_n) = (0u32, 0u64, 0usize, 0u32);
     let mut unreachable: Vec<(BlockPos, String)> = Vec::new();
     let mut deviations = 0usize;
+    let mut stalled = 0usize;
 
     site.terrain.sky_top = positions.iter().map(|p| p.y).max().unwrap_or(origin.1) + 1;
     let mut todo: Vec<usize> = (0..order.len()).collect();
@@ -177,8 +175,16 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
                 }
             }
             unreachable.push((world, format!("{}/out_of_reach", b.name)));
+            stalled += 1;
+            if stalled >= STALL_LIMIT {
+                return Err(format!(
+                    "planner gave up: placing blocks (no standing spot for {STALL_LIMIT} blocks in a row; bot at {here:?}, {} cells walkable, open sky {}; last target {world:?} {}; block {i}/{})",
+                    site.terrain.reachable_count(here, 200, 200_000), site.terrain.sky_open(here), b.name, order.len()
+                ));
+            }
             continue;
         }
+        stalled = 0;
         // Never seal the bot into a pocket it cannot leave: pick another standing cell, or put the
         // block off until the end.
         let t_seal = std::time::Instant::now();
@@ -273,11 +279,23 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     last_pass = true;
     }
     let t_clean = std::time::Instant::now();
-    let left = site.finish(&mut rec).map_err(|e| e.to_string())?;
+    let mut over_budget = None;
+    let left = site
+        .finish_while(&mut rec, &mut |left| match budget.check("removing scaffold", &|| format!("{left} blocks left")) {
+            Ok(()) => true,
+            Err(e) => {
+                over_budget = Some(e);
+                false
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    if let Some(e) = over_budget {
+        return Err(e);
+    }
     add(|_| {}, t_clean, |t| &mut t.cleanup);
     budget.check("cleanup", &|| format!("{} steps", rec.steps.len()))?;
     if left > 0 {
-        return Err(format!("{left} scaffold pillar(s) could not be removed"));
+        return Err(format!("{left} scaffold block(s) could not be removed"));
     }
     cp_n += 1;
     rec.steps.push(Step::Checkpoint { n: cp_n, count, hash });

@@ -160,6 +160,9 @@ pub fn apply(w: &mut World, st: &Step) -> Result<(), String> {
             if *c != w.feet {
                 return Err("PILLAR must be at the feet cell".into());
             }
+            if w.solid(*c) {
+                return Err("the pillar cell is not free".into());
+            }
             if !w.carries((c.0, c.1 - 1, c.2)) || w.solid((c.0, c.1 + 2, c.2)) {
                 return Err("pillar needs a floor to click and head room".into());
             }
