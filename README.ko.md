@@ -69,6 +69,35 @@ build-bot run castle.bbplan 127.0.0.1:25566 --verify   # 서버에서 재생
 않습니다(docs/PROGRESS.md). 이웃에 따라 정해지는 블록 상태(계단 모양, 울타리·유리판 연결)는 클라이언트가 고를 수 없어
 슬라이서가 개수를 보고합니다.
 
+## 슬라이싱 미리보기
+
+3D 프린터 슬라이서의 층별 미리보기처럼, 서버에 접속하기 전에 `.bbplan` 을 눈으로 확인할 수 있습니다.
+
+```bash
+cargo run --release --bin build-bot -- slice blueprints/factory-small.schem -o small.bbplan
+python tools/plan_preview/build.py small.bbplan -o preview.html   # preview.html 을 브라우저로 열기
+```
+
+<p align="center"><img src="docs/plan-preview.gif" alt="소형 공장 계획 미리보기 애니메이션 (게임 화면 아님)" width="800"></p>
+<p align="center"><sub><b>계획 미리보기이며 게임 화면이 아닙니다:</b> 소형 공장 계획(5338단계)을 브라우저에서 오프라인 재생</sub></p>
+
+| 임시 블록과 봇 경로 | 층 슬라이더 (0~5층) |
+|---|---|
+| <img src="docs/plan-preview-scaffold.png" alt="임시 비계를 강조한 계획 미리보기 (게임 화면 아님)" width="420"> | <img src="docs/plan-preview-layer.png" alt="5층까지 자른 계획 미리보기 (게임 화면 아님)" width="420"> |
+
+단계·층 슬라이더, 재생 버튼, "선택한 층만 보기", 현재 단계 텍스트와 대상 칸 테두리, 봇과 최근 60개 위치, 벽 너머로도 보이는
+임시 받침(주황)과 비계 기둥(노랑), 현재 진행·계획 헤더 통계를 보여줍니다(화면 글자는 영어). HTML 파일 하나이며 three.js 0.160.0 은
+jsDelivr 에서 불러오므로 브라우저에 네트워크가 필요합니다. 계획 없이 빌드하면 파일 선택 창으로 엽니다. 블록은 단색 정육면체로만
+그립니다(계단·반블록 모양은 표현하지 않음). 계획 내용을 보여줄 뿐이며, 합법성 검사는 뷰어가 아니라 `build-bot simulate` 가 합니다.
+
+이미지를 다시 만들려면:
+
+```bash
+cd tools/plan_preview && npm install                     # playwright-core, 해당 Chromium 설치 필요
+node render.js ../../preview.html shots frames           # PNG 2장 + GIF 프레임
+python gif.py frames shots/plan-preview.gif              # Pillow 필요
+```
+
 ## 규칙을 어떻게 알아냈나
 
 도달 거리, 설치, 이동, 패킷 규칙은 공식 Minecraft 1.21.1 서버를 공식 Mojang 매핑으로 디컴파일해 읽고(표는 서버의 데이터

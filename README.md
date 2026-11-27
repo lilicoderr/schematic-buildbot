@@ -75,6 +75,36 @@ run in 748 s (3.2 blocks/s, faster at the start and slower where many scaffolds 
 by block updates, 0 re-placed, 0 kicks. The large 22k-block factory does not slice cleanly yet (see docs/PROGRESS.md).
 Neighbour-derived block states (stair shape, fence and pane connections) cannot be chosen by a client; the slicer counts them.
 
+## Slicing preview
+
+Like the layer preview of a 3D-printer slicer, a `.bbplan` can be inspected before any server is involved:
+
+```bash
+cargo run --release --bin build-bot -- slice blueprints/factory-small.schem -o small.bbplan
+python tools/plan_preview/build.py small.bbplan -o preview.html   # open preview.html in a browser
+```
+
+<p align="center"><img src="docs/plan-preview.gif" alt="animated plan preview of the small factory (not in-game)" width="800"></p>
+<p align="center"><sub><b>Plan preview, not in-game:</b> the small factory plan (5338 steps) replayed offline in the browser</sub></p>
+
+| Temporary blocks and bot path | Layer slider (layers 0 to 5) |
+|---|---|
+| <img src="docs/plan-preview-scaffold.png" alt="plan preview with temporary scaffold highlighted (not in-game)" width="420"> | <img src="docs/plan-preview-layer.png" alt="plan preview cut at layer 5 (not in-game)" width="420"> |
+
+Step and layer sliders, play button, "only this layer" switch, the current step as text with its cell outlined, the bot and
+its last 60 positions, temporary supports (orange) and scaffold pillars (yellow) visible through walls, and live and header
+statistics. The page is a single HTML file; three.js 0.160.0 is loaded from jsDelivr, so the browser needs network access.
+Built without a plan argument, it has a file picker instead. Blocks are drawn as flat-coloured cubes (stairs, slabs and
+other shapes are not modelled). It shows what the plan says; legality is checked by `build-bot simulate`, not by the viewer.
+
+To regenerate the images:
+
+```bash
+cd tools/plan_preview && npm install                     # playwright-core; needs its Chromium installed
+node render.js ../../preview.html shots frames           # two PNGs + GIF frames
+python gif.py frames shots/plan-preview.gif              # needs Pillow
+```
+
 ## How the rules were derived
 
 The reach, placement, movement and packet rules are read from the official Minecraft 1.21.1 server (decompiled with the
