@@ -219,7 +219,7 @@ impl Terrain {
     /// beyond the nearest one, serves the longest run of following blocks without moving again.
     /// Walking costs far more time than placing, so a slightly longer walk to a better spot wins.
     pub fn route_for_run(&self, start: Cell, upcoming: &[BlockPos], radius: i32, max_nodes: usize) -> Option<Vec<Cell>> {
-        const SLACK: u32 = 10;
+        const SLACK: u32 = 3;
         const STEP_COST: i64 = 1;
         // Stand at the target's height or above (on what is already built): never below a ceiling.
         const BELOW_COST: i64 = 3;
@@ -238,7 +238,7 @@ impl Terrain {
                 if limit == u32::MAX {
                     limit = depth + SLACK;
                 }
-                let score = 2 * run_from(cur, upcoming) as i64 - BELOW_COST * (first.y - cur.1).max(0) as i64 - STEP_COST * (depth - (limit - SLACK)) as i64;
+                let score = 3 * run_from(cur, upcoming) as i64 - BELOW_COST * (first.y - cur.1).max(0) as i64 - STEP_COST * (depth - (limit - SLACK)) as i64;
                 if best.is_none_or(|(b, _)| score > b) {
                     best = Some((score, cur));
                 }

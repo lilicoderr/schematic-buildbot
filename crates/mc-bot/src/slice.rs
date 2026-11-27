@@ -15,7 +15,7 @@ use crate::scaffold::{Mover, Site};
 use crate::schematic::{Block, Schematic};
 use crate::sim;
 use crate::support;
-use crate::world::{within_reach, BlockPos, Vec3};
+use crate::world::{Face, within_reach, BlockPos, Vec3};
 use std::collections::{HashMap, HashSet};
 use std::io;
 
@@ -142,7 +142,17 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     let mut last_pass = false;
     loop {
     let mut deferred: Vec<usize> = Vec::new();
-    for &i in &todo {
+    let mut queue = crate::batch::Queue::new(todo.iter().copied());
+    loop {
+        // place everything in reach before walking on; a block is "ready" when it has something to
+        // rest on and its wanted state can be produced right now
+        let next = queue.take(&positions, rec.feet, |k| {
+            let p = positions[k];
+            let solid = |q: BlockPos| q.y < origin.1 || placed.contains(&q);
+            let rests = p.y == origin.1 || [p.below(), p.offset(Face::North), p.offset(Face::South), p.offset(Face::East), p.offset(Face::West)].iter().any(|q| placed.contains(q));
+            rests && matches!(placement::plan(&Block { pos: p, ..(*order[k]).clone() }, solid), Action::Place(a) if a.unhonoured.is_empty())
+        });
+        let Some(i) = next else { break };
         budget.check(if last_pass { "deferred blocks" } else { "placing blocks" }, &|| format!("block {i}/{} ({} placed, {} steps)", order.len(), count, rec.steps.len()))?;
         let b = order[i];
         let world = positions[i];
@@ -164,9 +174,9 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             }
             Action::Place(p) => p,
         };
-        let end = positions.len().min(i + LOOKAHEAD);
+        let upcoming = queue.upcoming(&positions, i, LOOKAHEAD);
         let t0 = std::time::Instant::now();
-        site.approach(&mut rec, &positions[i..end]).map_err(|e| e.to_string())?;
+        site.approach(&mut rec, &upcoming).map_err(|e| e.to_string())?;
         add(|_| {}, t0, |t| &mut t.approach);
         let here = feet_cell(rec.feet);
         if !within_reach(rec.feet, world) || blocks_cell(here, world) {
@@ -200,7 +210,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
                 break;
             }
             site.terrain.avoid.insert(here);
-            site.approach(&mut rec, &positions[i..end]).map_err(|e| e.to_string())?;
+            site.approach(&mut rec, &upcoming).map_err(|e| e.to_string())?;
             here = feet_cell(rec.feet);
             if !within_reach(rec.feet, world) || blocks_cell(here, world) {
                 break;
