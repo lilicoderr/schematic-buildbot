@@ -9,9 +9,10 @@ use mc_bot::builder::PlayClient;
 use mc_bot::nav::{self, Terrain};
 use mc_bot::placement::{self, Action};
 use mc_bot::progress::Progress;
+use mc_bot::scaffold::Site;
 use mc_bot::schematic::{Block, Schematic};
 use mc_bot::version::{self, Version};
-use mc_bot::world::{within_reach, BlockPos};
+use mc_bot::world::BlockPos;
 use mc_bot::{blocks, i18n, litematic, schem, tr};
 use std::collections::{BTreeMap, HashSet};
 use std::io::{self, Read};
@@ -319,6 +320,9 @@ fn resume_point(opts: &Opts, path: &Path, fingerprint: u64, total: usize) -> Opt
     }
 }
 
+/// Upcoming blocks considered when choosing where to stand.
+const LOOKAHEAD: usize = 48;
+
 fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &Opts, version: Version) -> io::Result<()> {
     println!(
         "{}",
@@ -360,12 +364,11 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
     );
 
     let at = |b: &Block| BlockPos::new(origin.x + b.pos.x, origin.y + b.pos.y, origin.z + b.pos.z);
-    let occupied: HashSet<(i32, i32, i32)> = order.iter().map(|b| at(b)).map(|p| (p.x, p.y, p.z)).collect();
     // Blocks from an earlier run already exist in the world.
     let mut placed: HashSet<BlockPos> = order.iter().take(start).map(|b| at(b)).collect();
-    let mut terrain = Terrain::new(origin.y, occupied.iter().copied().collect());
+    let mut site = Site::new(Terrain::new(origin.y, HashSet::new()));
     for b in order.iter().take(start) {
-        terrain_add(&mut terrain, at(b), b);
+        terrain_add(&mut site.terrain, at(b), b);
     }
 
     let mut stats = Stats::default();
@@ -376,6 +379,7 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
         let _ = Progress { fingerprint, origin, done: idx, total }.save(&progress_path);
     };
 
+    let positions: Vec<BlockPos> = order.iter().map(|b| at(b)).collect();
     let mut processed = start;
     for b in order.iter().skip(start) {
         if bot.kicked.is_some() {
@@ -411,7 +415,7 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
             Action::Place(p) => p,
         };
         let t0 = Instant::now();
-        approach(&mut bot, &terrain, world)?;
+        site.approach(&mut bot, &positions[processed - 1..positions.len().min(processed - 1 + LOOKAHEAD)])?;
         let t1 = Instant::now();
         let ok = bot.place(world, item, &plan)?;
         stats.moving += t1 - t0;
@@ -419,7 +423,7 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
         if ok {
             stats.done += 1;
             placed.insert(world);
-            terrain_add(&mut terrain, world, b);
+            terrain_add(&mut site.terrain, world, b);
             attempted.push((Block { pos: world, ..(*b).clone() }, item));
             stats.note_defaults(&b.name, &plan.unhonoured);
         } else {
@@ -427,9 +431,13 @@ fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &
         }
     }
 
+    let left = site.finish(&mut bot)?;
+    if left > 0 {
+        println!("{}", tr!("{} scaffold pillar(s) could not be removed", "비계 기둥 {}개를 제거하지 못했습니다", left));
+    }
     bot.idle(Duration::from_millis(500))?;
     if opts.verify {
-        verify_pass(&mut bot, &attempted, &placed, &terrain, origin.y)?;
+        verify_pass(&mut bot, &attempted, &placed, &mut site, origin.y)?;
     }
     stats.confirmed = attempted.iter().filter(|(b, _)| bot.blocks.is_confirmed(b.pos)).count();
     stats.attempted = attempted.len();
@@ -541,25 +549,12 @@ fn terrain_add(terrain: &mut Terrain, world: BlockPos, b: &Block) {
     terrain.add_block((world.x, world.y, world.z), nav::is_standable_surface(&b.name, b.prop("type")));
 }
 
-/// Walk to a spot from which `world` is in reach: along the ground, over blocks already built
-/// (jumping up one block at a time), or down off them. Blocks that no such spot reaches (roofs,
-/// tall walls) are left alone and counted as out of reach: the bot never flies or hovers.
-fn approach(bot: &mut PlayClient, terrain: &Terrain, world: BlockPos) -> io::Result<()> {
-    if !within_reach(bot.feet, world) {
-        let goal = nav::reaches(terrain, world);
-        if let Some(route) = terrain.route(nav::feet_cell(bot.feet), &goal, 24, 40_000) {
-            bot.walk_cells(&route)?;
-        }
-    }
-    Ok(())
-}
-
 /// Re-place every block the server never confirmed (up to two rounds).
 fn verify_pass(
     bot: &mut PlayClient,
     attempted: &[(Block, i32)],
     placed: &HashSet<BlockPos>,
-    terrain: &Terrain,
+    site: &mut Site,
     feet_y: i32,
 ) -> io::Result<()> {
     for round in 1..=2 {
@@ -572,13 +567,14 @@ fn verify_pass(
             bot.blocks.forget(b.pos);
             let solid = |p: BlockPos| p.y < feet_y || placed.contains(&p);
             if let Action::Place(plan) = placement::plan(b, solid) {
-                approach(bot, terrain, b.pos)?;
+                site.approach(bot, std::slice::from_ref(&b.pos))?;
                 bot.place(b.pos, *item, &plan)?;
             }
             if bot.kicked.is_some() {
                 return Ok(());
             }
         }
+        site.finish(bot)?;
         bot.idle(Duration::from_millis(500))?;
     }
     Ok(())
