@@ -42,6 +42,9 @@ pub struct Terrain {
     /// Highest cell row the blueprint reaches; a standing cell with nothing solid above it up to
     /// here sees the open sky (the bot can always pillar out of it).
     pub sky_top: i32,
+    /// Set by `route_for_run` when its search was cut short by the radius or node limit, i.e. a
+    /// wider search could still find a route.
+    pub pruned: std::cell::Cell<bool>,
 }
 
 impl Terrain {
@@ -206,6 +209,7 @@ impl Terrain {
         // Stand at the target's height or above (on what is already built): never below a ceiling.
         const BELOW_COST: i64 = 3;
         let first = *upcoming.first()?;
+        self.pruned.set(false);
         let mut came: HashMap<Cell, (Cell, u32)> = HashMap::from([(start, (start, 0))]);
         let mut queue = VecDeque::from([start]);
         let mut best: Option<(i64, Cell)> = None;
@@ -225,10 +229,14 @@ impl Terrain {
                 }
             }
             if came.len() > max_nodes {
+                self.pruned.set(true);
                 break;
             }
             for next in self.steps_from(cur) {
                 let far = (next.0 - start.0).abs().max((next.2 - start.2).abs()) > radius;
+                if far {
+                    self.pruned.set(true);
+                }
                 if !far && !came.contains_key(&next) {
                     came.insert(next, (cur, depth + 1));
                     queue.push_back(next);

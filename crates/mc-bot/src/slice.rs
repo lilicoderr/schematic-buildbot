@@ -24,6 +24,36 @@ pub const CHECKPOINT_EVERY: usize = 250;
 /// A pocket smaller than this many standing cells (no way to the open ground) counts as sealed.
 const SEAL_CAP: usize = 20_000;
 
+/// Where planning time went in the last `slice` call on this thread (printed by the CLI; kept out
+/// of the plan so plans stay byte-identical).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Times {
+    pub tour: std::time::Duration,
+    pub approach: std::time::Duration,
+    pub sealing: std::time::Duration,
+    pub chain: std::time::Duration,
+    pub simulate: std::time::Duration,
+    pub cleanup: std::time::Duration,
+}
+
+thread_local! {
+    static TIMES: std::cell::Cell<Times> = std::cell::Cell::new(Times::default());
+}
+
+/// Timing breakdown of the last [`slice`] call on this thread.
+pub fn last_times() -> Times {
+    TIMES.with(|t| t.get())
+}
+
+fn add(f: impl FnOnce(&mut Times), t0: std::time::Instant, field: fn(&mut Times) -> &mut std::time::Duration) {
+    TIMES.with(|t| {
+        let mut v = t.get();
+        *field(&mut v) += t0.elapsed();
+        f(&mut v);
+        t.set(v);
+    });
+}
+
 /// Records movement as plan steps instead of moving anybody.
 struct Recorder {
     feet: Vec3,
@@ -81,7 +111,10 @@ fn click_steps(plan: &placement::Plan) -> Vec<ClickStep> {
 
 /// Cut `schem` into a plan for flat ground whose top is below `origin.1`.
 pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Result<Plan, String> {
+    TIMES.with(|t| t.set(Times::default()));
+    let t_tour = std::time::Instant::now();
     let order = crate::tour::tour_order(schem);
+    add(|_| {}, t_tour, |t| &mut t.tour);
     let start = (origin.0 - 2, origin.1, origin.2 - 2);
     let at = |b: &Block| BlockPos::new(origin.0 + b.pos.x, origin.1 + b.pos.y, origin.2 + b.pos.z);
     let positions: Vec<BlockPos> = order.iter().map(|b| at(b)).collect();
@@ -121,7 +154,9 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             Action::Place(p) => p,
         };
         let end = positions.len().min(i + LOOKAHEAD);
+        let t0 = std::time::Instant::now();
         site.approach(&mut rec, &positions[i..end]).map_err(|e| e.to_string())?;
+        add(|_| {}, t0, |t| &mut t.approach);
         let here = feet_cell(rec.feet);
         if !within_reach(rec.feet, world) || blocks_cell(here, world) {
             if std::env::var("BUILDBOT_DUMP").is_ok() && unreachable.is_empty() {
@@ -138,6 +173,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
         }
         // Never seal the bot into a pocket it cannot leave: pick another standing cell, or put the
         // block off until the end.
+        let t_seal = std::time::Instant::now();
         let (mut here, mut tries) = (here, 0);
         while site.terrain.sealed_in(here, (world.x, world.y, world.z), SEAL_CAP) {
             tries += 1;
@@ -153,6 +189,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
         }
         site.terrain.avoid.clear();
         let sealed = site.terrain.sealed_in(here, (world.x, world.y, world.z), SEAL_CAP);
+        add(|_| {}, t_seal, |t| &mut t.sealing);
         if !last_pass && sealed {
             deferred.push(i);
             continue;
@@ -173,7 +210,10 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             let cellp = |p: BlockPos| (p.x, p.y, p.z);
             let can_click = |p: BlockPos| site.terrain.solid(cellp(p));
             let blocked = |p: BlockPos| blocks_cell(here, p);
-            match support::find_chain(world, rec.feet, &can_click, &blocked) {
+            let t_chain = std::time::Instant::now();
+            let found = support::find_chain(world, rec.feet, &can_click, &blocked);
+            add(|_| {}, t_chain, |t| &mut t.chain);
+            match found {
                 Some(c) => chain = c,
                 None => {
                     unreachable.push((world, format!("{}/no_support", b.name)));
@@ -224,7 +264,9 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     todo = deferred;
     last_pass = true;
     }
+    let t_clean = std::time::Instant::now();
     let left = site.finish(&mut rec).map_err(|e| e.to_string())?;
+    add(|_| {}, t_clean, |t| &mut t.cleanup);
     if left > 0 {
         return Err(format!("{left} scaffold pillar(s) could not be removed"));
     }
@@ -239,12 +281,14 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     plan.header.unreachable = unreachable;
     crate::slice_stats::fill(&mut plan, schem.blocks.len(), deviations);
     plan.header.stats.push(("state_neighbour_derived".into(), crate::slice_stats::neighbour_derived(schem).to_string()));
-    if let Err(e) = sim::simulate(&plan, schem) {
+    let t_sim = std::time::Instant::now();
+    let sim_result = sim::simulate(&plan, schem);
+    add(|_| {}, t_sim, |t| &mut t.simulate);
+    if let Err(e) = sim_result {
         if let Ok(p) = std::env::var("BUILDBOT_FAILED_PLAN") {
             let _ = std::fs::write(p, plan.to_text());
         }
         return Err(format!("slicer bug: plan fails simulation at step {}: {}", e.step + 1, e.msg));
     }
-    sim::simulate(&plan, schem).map_err(|e| format!("slicer bug: plan fails simulation at step {}: {}", e.step, e.msg))?;
     Ok(plan)
 }

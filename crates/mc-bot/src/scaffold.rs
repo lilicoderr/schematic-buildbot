@@ -306,11 +306,8 @@ impl Site {
         self.sweep_bridges(bot, &HashSet::new())?;
         let start = feet_cell(bot.feet());
         let t = Instant::now();
-        let mut route = self.terrain.route_for_run(start, upcoming, 24, 40_000);
-        if route.is_none() {
-            // big sites: the block may be a long walk away
-            route = self.terrain.route_for_run(start, upcoming, 160, 400_000);
-        }
+        let route = self.terrain.route_for_run(start, upcoming, 24, 40_000);
+        let cut_short = self.terrain.pruned.get();
         self.timing.search += t.elapsed();
         if let Some(route) = route {
             return self.walk(bot, &route);
@@ -333,8 +330,18 @@ impl Site {
             if let Some(route) = self.terrain.route_for_run(start, upcoming, 24, 40_000) {
                 self.walk(bot, &route)?;
             }
-        } else if let Some(hops) = crate::bridge::plan_bridge(&self.terrain, start, first, 24, 40_000) {
-            self.walk_hops(bot, start, &hops)?;
+        } else {
+            // Big sites: the block may simply be a long walk away. Searched last because exhausting a
+            // wide area is expensive when nothing is found.
+            let t = Instant::now();
+            let far = if cut_short { self.terrain.route_for_run(start, upcoming, 160, 400_000) } else { None };
+            self.timing.search += t.elapsed();
+            if let Some(route) = far {
+                return self.walk(bot, &route);
+            }
+            if let Some(hops) = crate::bridge::plan_bridge(&self.terrain, start, first, 24, 40_000) {
+                self.walk_hops(bot, start, &hops)?;
+            }
         }
         Ok(())
     }

@@ -29,6 +29,10 @@ pub struct Report {
     pub elapsed: Duration,
     /// Placements per second in each window of 100 placements.
     pub windows: Vec<f64>,
+    /// Seconds spent per step kind: move, pillar, support, place, break, checkpoint.
+    pub spent: [f64; 6],
+    /// Step counts per kind in the same order.
+    pub counts: [u32; 6],
     pub kicked: Option<String>,
     pub aborted: Option<String>,
 }
@@ -67,6 +71,16 @@ pub fn run(bot: &mut PlayClient, plan: &Plan, opts: &Opts, say: &mut dyn FnMut(&
             rep.aborted = Some(format!("step {}: {st}: {msg}", i + 1));
             break;
         }
+        let kind = match st {
+            Step::Move(_) => 0,
+            Step::Pillar(_) => 1,
+            Step::Support { .. } => 2,
+            Step::Place { .. } => 3,
+            Step::Break(_) => 4,
+            Step::Checkpoint { .. } => 5,
+            Step::Auto { .. } => 3,
+        };
+        let t_step = Instant::now();
         match st {
             Step::Move(c) => bot.walk_cells(&[off.cell(before), off.cell(*c)])?,
             Step::Pillar(c) => bot.pillar_up(off.cell(*c), 1, scaffold_item)?,
@@ -106,6 +120,8 @@ pub fn run(bot: &mut PlayClient, plan: &Plan, opts: &Opts, say: &mut dyn FnMut(&
                 say(&format!("checkpoint {n}: {} blocks expected, {} re-placed", world.built().0, fixed));
             }
         }
+        rep.spent[kind] += t_step.elapsed().as_secs_f64();
+        rep.counts[kind] += 1;
         rep.steps_done = i + 1;
     }
     bot.idle(Duration::from_millis(500))?;

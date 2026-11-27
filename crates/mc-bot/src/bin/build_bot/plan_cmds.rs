@@ -40,6 +40,8 @@ pub fn slice_cmd(args: &[String]) {
     let plan = slice::slice(&schem, origin, version.protocol).unwrap_or_else(|e| fail(e));
     std::fs::write(&out, plan.to_text()).unwrap_or_else(|e| fail(format!("{out}: {e}")));
     println!("{}", tr!("sliced '{}' in {:.1}s -> {}", "'{}' 슬라이스 {:.1}초 -> {}", schem.name, t.elapsed().as_secs_f64(), out));
+    let t = slice::last_times();
+    println!("  planning time: tour {:.1}s, approach/path search {:.1}s, seal checks {:.1}s, support chains {:.1}s, cleanup {:.1}s, simulation {:.1}s", t.tour.as_secs_f64(), t.approach.as_secs_f64(), t.sealing.as_secs_f64(), t.chain.as_secs_f64(), t.cleanup.as_secs_f64(), t.simulate.as_secs_f64());
     for (k, v) in &plan.header.stats {
         println!("  {k}: {v}");
     }
@@ -123,6 +125,9 @@ pub fn run_cmd(args: &[String]) {
         let w: Vec<String> = r.windows.iter().map(|x| format!("{x:.1}")).collect();
         println!("{}", tr!("blocks/s per 100 placements: {}", "100개당 블록/초: {}", w.join(" ")));
     }
+    let names = ["move", "pillar", "support", "place", "break", "checkpoint"];
+    let split: Vec<String> = (0..6).map(|k| format!("{} {:.0}s/{}", names[k], r.spent[k], r.counts[k])).collect();
+    println!("{}", tr!("time per step kind: {}", "단계별 시간: {}", split.join(", ")));
     for p in r.missing.iter().take(20) {
         println!("  missing: ({}, {}, {})", p.x, p.y, p.z);
     }
