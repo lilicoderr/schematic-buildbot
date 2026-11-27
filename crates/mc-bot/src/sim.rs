@@ -183,7 +183,7 @@ fn step_once(w: &mut World, st: &Step) -> Result<(), String> {
             if !w.scaffold.contains(&cell(*p)) {
                 return Err(format!("{p:?} is not scaffold; only scaffold may be broken"));
             }
-            if !within_reach(cell_feet(w.feet), *p) {
+            if eye_to_box(cell_feet(w.feet), *p) > CLICK_REACH {
                 return Err("break out of reach".into());
             }
             w.blocks.remove(&cell(*p));

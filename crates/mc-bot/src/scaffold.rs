@@ -8,7 +8,7 @@ use crate::nav::{blocks_cell, cell_feet, run_from, Cell, Terrain};
 use crate::blocks;
 use crate::builder::PlayClient;
 use crate::nav::feet_cell;
-use crate::world::{within_reach, BlockPos};
+use crate::world::{eye_to_box, within_reach, BlockPos, Face, CLICK_REACH};
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::time::{Duration, Instant};
@@ -60,7 +60,8 @@ pub fn plan_pillar(
                     break;
                 }
                 let top = pillar.top();
-                if within_reach(cell_feet(top), first) && !blocks_cell(top, first) {
+                let in_pillar = pillar.cells().any(|c| c == (first.x, first.y, first.z));
+                if !in_pillar && within_reach(cell_feet(top), first) && !blocks_cell(top, first) && !t.avoid.contains(&top) {
                     let cost = depth as i64 + 3 * h as i64 - run_from(top, upcoming) as i64 / 4;
                     if best.is_none_or(|(b, ..)| cost < b) {
                         best = Some((cost, cur, h));
@@ -107,6 +108,8 @@ pub trait Mover {
     fn pillar_down(&mut self, base: Cell, height: i32) -> io::Result<()>;
     /// Break one scaffold block that is within reach.
     fn break_block(&mut self, pos: BlockPos) -> io::Result<()>;
+    /// Place one scaffold block at `pos` by the given click.
+    fn place_support(&mut self, pos: BlockPos, click: &crate::plan::ClickStep) -> io::Result<()>;
 }
 
 impl Mover for PlayClient {
@@ -128,6 +131,9 @@ impl Mover for PlayClient {
     fn break_block(&mut self, pos: BlockPos) -> io::Result<()> {
         PlayClient::break_block(self, pos)
     }
+    fn place_support(&mut self, pos: BlockPos, click: &crate::plan::ClickStep) -> io::Result<()> {
+        PlayClient::place_support(self, pos, click.support, click.face, click.cursor)
+    }
 }
 
 /// What the bot stands on and around while building: the terrain model plus the scaffold
@@ -135,6 +141,8 @@ impl Mover for PlayClient {
 pub struct Site {
     pub terrain: Terrain,
     pillars: Vec<Pillar>,
+    /// Floor blocks of scaffold bridges still standing (see `bridge.rs`).
+    bridges: Vec<Cell>,
     pub timing: Timing,
 }
 
@@ -152,7 +160,7 @@ pub struct Timing {
 
 impl Site {
     pub fn new(terrain: Terrain) -> Self {
-        Site { terrain, pillars: Vec::new(), timing: Timing::default() }
+        Site { terrain, pillars: Vec::new(), bridges: Vec::new(), timing: Timing::default() }
     }
 
     /// Take pillar `i` away. Standing on its top: dig down from the top. Otherwise walk to spots
@@ -166,7 +174,7 @@ impl Site {
         } else {
             for c in p.cells().collect::<Vec<_>>().into_iter().rev() {
                 let target = BlockPos::new(c.0, c.1, c.2);
-                let ok = |g: Cell| !(g.0 == c.0 && g.2 == c.2) && within_reach(cell_feet(g), target);
+                let ok = |g: Cell| !(g.0 == c.0 && g.2 == c.2) && eye_to_box(cell_feet(g), target) <= CLICK_REACH;
                 let here = feet_cell(bot.feet());
                 if !ok(here) || !self.terrain.can_stand(here) {
                     let goal = |g: Cell| self.terrain.can_stand(g) && ok(g);
@@ -206,7 +214,7 @@ impl Site {
                 let p = &self.pillars[i];
                 let c = (p.base.0, p.base.1 + p.height - 1, p.base.2);
                 let target = BlockPos::new(c.0, c.1, c.2);
-                if !within_reach(feet, target) {
+                if eye_to_box(feet, target) > CLICK_REACH {
                     break;
                 }
                 bot.break_block(target)?;
@@ -230,17 +238,35 @@ impl Site {
                 break;
             }
         }
-        Ok(self.pillars.len())
+        while let Some(&c) = self.bridges.last() {
+            if !self.remove_bridge(bot, c)? {
+                break;
+            }
+        }
+        Ok(self.pillars.len() + self.bridges.len())
     }
 
-    /// Walk a route, counting steps and time.
+    /// Walk a route, counting steps and time. Stepping off a pillar takes it down right away,
+    /// while it is still within reach.
     fn walk(&mut self, bot: &mut impl Mover, route: &[Cell]) -> io::Result<()> {
-        let t = Instant::now();
         self.timing.routes += 1;
         self.timing.steps += route.len().saturating_sub(1) as u32;
-        let r = bot.walk_cells(route);
+        let off_pillar = route.first().is_some_and(|c| self.pillars.iter().any(|p| p.top() == *c));
+        let (head, tail) = if off_pillar && route.len() > 2 { route.split_at(2) } else { (route, &route[..0]) };
+        let t = Instant::now();
+        bot.walk_cells(head)?;
         self.timing.walk += t.elapsed();
-        r
+        if off_pillar {
+            self.sweep_nearby(bot)?;
+        }
+        if !tail.is_empty() {
+            let mut rest = vec![*head.last().unwrap()];
+            rest.extend_from_slice(tail);
+            let t = Instant::now();
+            bot.walk_cells(&rest)?;
+            self.timing.walk += t.elapsed();
+        }
+        Ok(())
     }
 
     fn in_scaffold(&self, t: BlockPos) -> Option<usize> {
@@ -248,7 +274,10 @@ impl Site {
     }
 
     fn can_place_from_here(&self, bot: &impl Mover, target: BlockPos) -> bool {
-        within_reach(bot.feet(), target) && !blocks_cell(feet_cell(bot.feet()), target) && self.in_scaffold(target).is_none()
+        within_reach(bot.feet(), target)
+            && !blocks_cell(feet_cell(bot.feet()), target)
+            && self.in_scaffold(target).is_none()
+            && !self.terrain.avoid.contains(&feet_cell(bot.feet()))
     }
 
     /// Get to a spot from which `upcoming[0]` can be placed: stay, walk (over built blocks, jumping
@@ -257,6 +286,9 @@ impl Site {
     /// counts it unreachable: it never flies or hovers.
     pub fn approach(&mut self, bot: &mut impl Mover, upcoming: &[BlockPos]) -> io::Result<()> {
         let first = upcoming[0];
+        if self.bridges.contains(&(first.x, first.y, first.z)) && !self.remove_bridge(bot, (first.x, first.y, first.z))? {
+            return Ok(());
+        }
         while let Some(i) = self.in_scaffold(first) {
             if !self.remove_pillar(bot, i)? {
                 return Ok(());
@@ -266,6 +298,7 @@ impl Site {
             return Ok(());
         }
         self.sweep_nearby(bot)?;
+        self.sweep_bridges(bot)?;
         let start = feet_cell(bot.feet());
         let t = Instant::now();
         let route = self.terrain.route_for_run(start, upcoming, 24, 40_000);
@@ -291,7 +324,68 @@ impl Site {
             if let Some(route) = self.terrain.route_for_run(start, upcoming, 24, 40_000) {
                 self.walk(bot, &route)?;
             }
+        } else if let Some(hops) = crate::bridge::plan_bridge(&self.terrain, start, first, 24, 40_000) {
+            self.walk_hops(bot, start, &hops)?;
         }
+        Ok(())
+    }
+
+    /// Walk a mixed route; where a hop needs a floor, bridge first: click the side of the floor
+    /// block we stand on and place a scaffold block next to it.
+    fn walk_hops(&mut self, bot: &mut impl Mover, start: Cell, hops: &[crate::bridge::Hop]) -> io::Result<()> {
+        let mut cur = start;
+        for h in hops {
+            if h.bridge {
+                let floor = BlockPos::new(h.to.0, h.to.1 - 1, h.to.2);
+                let from = BlockPos::new(cur.0, cur.1 - 1, cur.2);
+                let face = Face::HORIZONTAL.iter().copied().find(|f| from.offset(*f) == floor).unwrap();
+                let click = crate::plan::ClickStep { support: from, face, cursor: crate::support::face_cursor(face) };
+                bot.place_support(floor, &click)?;
+                self.terrain.add_block((floor.x, floor.y, floor.z), true);
+                self.bridges.push((floor.x, floor.y, floor.z));
+            }
+            self.walk(bot, &[cur, h.to])?;
+            cur = h.to;
+            if bot.kicked() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Break the bridge floor `c`: from where we stand if possible, else after walking to a spot
+    /// that reaches it (never from above it). False if no such spot exists.
+    fn remove_bridge(&mut self, bot: &mut impl Mover, c: Cell) -> io::Result<bool> {
+        let target = BlockPos::new(c.0, c.1, c.2);
+        let reach = |g: Cell| eye_to_box(cell_feet(g), target) <= CLICK_REACH && !(g.0 == c.0 && g.2 == c.2);
+        let here = feet_cell(bot.feet());
+        if !(reach(here) && self.terrain.can_stand(here)) {
+            let goal = |g: Cell| self.terrain.can_stand(g) && reach(g);
+            let Some(route) = self.terrain.route(here, &goal, 40, 60_000) else { return Ok(false) };
+            self.walk(bot, &route)?;
+        }
+        bot.break_block(target)?;
+        self.terrain.remove_block(c);
+        self.bridges.retain(|b| *b != c);
+        Ok(true)
+    }
+
+    /// Break bridge floors within reach that the bot is not standing on.
+    fn sweep_bridges(&mut self, bot: &mut impl Mover) -> io::Result<()> {
+        let feet = bot.feet();
+        let here = feet_cell(feet);
+        let mut keep = Vec::new();
+        for c in std::mem::take(&mut self.bridges) {
+            let target = BlockPos::new(c.0, c.1, c.2);
+            let under_us = here.0 == c.0 && here.2 == c.2 && here.1 > c.1;
+            if !under_us && eye_to_box(feet, target) <= CLICK_REACH {
+                bot.break_block(target)?;
+                self.terrain.remove_block(c);
+            } else {
+                keep.push(c);
+            }
+        }
+        self.bridges = keep;
         Ok(())
     }
 
@@ -320,7 +414,8 @@ impl Site {
             for c in pillar.cells() {
                 self.terrain.add_block(c, true);
             }
-            let found = self.terrain.route_for_run(pillar.top(), upcoming, 24, 40_000).is_some();
+            let hits_target = upcoming.first().is_some_and(|f| pillar.cells().any(|c| c == (f.x, f.y, f.z)));
+            let found = !hits_target && self.terrain.route_for_run(pillar.top(), upcoming, 24, 40_000).is_some();
             for c in pillar.cells() {
                 self.terrain.remove_block(c);
             }

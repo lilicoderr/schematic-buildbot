@@ -370,6 +370,19 @@ impl PlayClient {
         self.conn.send(ids::SB_PLAY_SWING_ARM, s.as_slice())
     }
 
+    /// Place one scaffold block by clicking `face` of `support` (bridging).
+    pub fn place_support(&mut self, pos: BlockPos, support: BlockPos, face: Face, cursor: (f32, f32, f32)) -> io::Result<()> {
+        let item = crate::blocks::item_id("cobblestone").unwrap_or(1);
+        let eye = Vec3::new(self.feet.x, self.feet.y + EYE_HEIGHT, self.feet.z);
+        let (yaw, pitch) = look_at(eye, pos.center());
+        self.yaw = yaw;
+        self.pitch = pitch;
+        self.set_creative_held(item)?;
+        self.send_pos_look(true)?;
+        self.use_item_on(support, face, cursor)?;
+        self.idle(self.place_delay)
+    }
+
     /// Break a scaffold block within reach and wait for the server to apply it.
     pub fn break_block(&mut self, pos: BlockPos) -> io::Result<()> {
         self.dig(pos)?;

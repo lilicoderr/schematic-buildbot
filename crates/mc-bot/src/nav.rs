@@ -37,6 +37,8 @@ pub struct Terrain {
     support: HashSet<Cell>,
     /// Every cell of the finished blueprint: never stood in, never walked through.
     reserved: HashSet<Cell>,
+    /// Standing cells the planner must not pick right now (they would seal the bot in).
+    pub avoid: HashSet<Cell>,
 }
 
 impl Terrain {
@@ -141,6 +143,34 @@ pub fn blocks_cell(c: Cell, p: BlockPos) -> bool {
 }
 
 impl Terrain {
+    /// With a block added at `extra`, can a player standing at `from` still walk (jump, drop) to
+    /// open ground? False means the area is a pocket of fewer than `cap` cells: placing there
+    /// would seal the player in. Searches at most `cap` cells, so a huge open area counts as open.
+    pub fn sealed_in(&mut self, from: Cell, extra: Cell, outside: &dyn Fn(Cell) -> bool, cap: usize) -> bool {
+        let had = self.body.contains(&extra);
+        if !had {
+            self.add_block(extra, false);
+        }
+        let mut seen: HashSet<Cell> = HashSet::from([from]);
+        let mut queue = VecDeque::from([from]);
+        let mut open = false;
+        while let Some(cur) = queue.pop_front() {
+            if outside(cur) || seen.len() >= cap {
+                open = true;
+                break;
+            }
+            for next in self.steps_from(cur) {
+                if seen.insert(next) {
+                    queue.push_back(next);
+                }
+            }
+        }
+        if !had {
+            self.remove_block(extra);
+        }
+        !open
+    }
+
     /// How many cells a walk from `start` can reach (diagnostics and tests).
     pub fn reachable_count(&self, start: Cell, radius: i32, max_nodes: usize) -> usize {
         let mut seen: HashSet<Cell> = HashSet::from([start]);
@@ -163,8 +193,10 @@ impl Terrain {
     /// beyond the nearest one, serves the longest run of following blocks without moving again.
     /// Walking costs far more time than placing, so a slightly longer walk to a better spot wins.
     pub fn route_for_run(&self, start: Cell, upcoming: &[BlockPos], radius: i32, max_nodes: usize) -> Option<Vec<Cell>> {
-        const SLACK: u32 = 4;
+        const SLACK: u32 = 10;
         const STEP_COST: i64 = 1;
+        // Stand at the target's height or above (on what is already built): never below a ceiling.
+        const BELOW_COST: i64 = 3;
         let first = *upcoming.first()?;
         let mut came: HashMap<Cell, (Cell, u32)> = HashMap::from([(start, (start, 0))]);
         let mut queue = VecDeque::from([start]);
@@ -175,11 +207,11 @@ impl Terrain {
             if depth > limit {
                 break;
             }
-            if self.can_stand(cur) && within_reach(cell_feet(cur), first) && !blocks_cell(cur, first) {
+            if self.can_stand(cur) && within_reach(cell_feet(cur), first) && !blocks_cell(cur, first) && !self.avoid.contains(&cur) {
                 if limit == u32::MAX {
                     limit = depth + SLACK;
                 }
-                let score = 2 * run_from(cur, upcoming) as i64 - STEP_COST * (depth - (limit - SLACK)) as i64;
+                let score = 2 * run_from(cur, upcoming) as i64 - BELOW_COST * (first.y - cur.1).max(0) as i64 - STEP_COST * (depth - (limit - SLACK)) as i64;
                 if best.is_none_or(|(b, _)| score > b) {
                     best = Some((score, cur));
                 }

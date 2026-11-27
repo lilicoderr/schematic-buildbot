@@ -21,6 +21,8 @@ use std::io;
 pub const LOOKAHEAD: usize = 96;
 /// A checkpoint is written after this many placements.
 pub const CHECKPOINT_EVERY: usize = 250;
+/// A pocket smaller than this many standing cells (no way to the open ground) counts as sealed.
+const SEAL_CAP: usize = 20_000;
 
 /// Records movement as plan steps instead of moving anybody.
 struct Recorder {
@@ -60,6 +62,10 @@ impl Mover for Recorder {
         self.steps.push(Step::Break(pos));
         Ok(())
     }
+    fn place_support(&mut self, pos: BlockPos, click: &ClickStep) -> io::Result<()> {
+        self.steps.push(Step::Support { pos, clicks: vec![click.clone()] });
+        Ok(())
+    }
 }
 
 fn click_steps(plan: &placement::Plan) -> Vec<ClickStep> {
@@ -79,11 +85,19 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     let mut unreachable: Vec<(BlockPos, String)> = Vec::new();
     let mut deviations = 0usize;
 
-    for (i, b) in order.iter().enumerate() {
+    let (fx0, fx1) = (positions.iter().map(|p| p.x).min().unwrap_or(0) - 1, positions.iter().map(|p| p.x).max().unwrap_or(0) + 1);
+    let (fz0, fz1) = (positions.iter().map(|p| p.z).min().unwrap_or(0) - 1, positions.iter().map(|p| p.z).max().unwrap_or(0) + 1);
+    let outside = |c: Cell| c.1 == origin.1 && (c.0 < fx0 || c.0 > fx1 || c.2 < fz0 || c.2 > fz1);
+    let mut todo: Vec<usize> = (0..order.len()).collect();
+    let mut last_pass = false;
+    loop {
+    let mut deferred: Vec<usize> = Vec::new();
+    for &i in &todo {
+        let b = order[i];
         let world = positions[i];
         let state = b.state_string();
         if blocks::item_id(&b.name).is_none() {
-            unreachable.push((world, b.name.clone()));
+            unreachable.push((world, format!("{}/unknown_block", b.name)));
             continue;
         }
         let solid = |p: BlockPos| p.y < origin.1 || placed.contains(&p);
@@ -103,7 +117,41 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
         site.approach(&mut rec, &positions[i..end]).map_err(|e| e.to_string())?;
         let here = feet_cell(rec.feet);
         if !within_reach(rec.feet, world) || blocks_cell(here, world) {
-            unreachable.push((world, b.name.clone()));
+            if std::env::var("BUILDBOT_DUMP").is_ok() && unreachable.is_empty() {
+                eprintln!("first out of reach: {world:?} {} from {here:?} (index {i}, last_pass {last_pass})", b.name);
+                for y in (here.1 - 3..here.1 + 9).rev() {
+                    let row: String = (here.0 - 14..here.0 + 14)
+                        .map(|x| if (x, y, here.2) == here { '@' } else if (x, y, here.2) == (world.x, world.y, world.z) { 'T' } else if site.terrain.solid((x, y, here.2)) { '#' } else { '.' })
+                        .collect();
+                    eprintln!("y{y} {row}");
+                }
+            }
+            unreachable.push((world, format!("{}/out_of_reach", b.name)));
+            continue;
+        }
+        // Never seal the bot into a pocket it cannot leave: pick another standing cell, or put the
+        // block off until the end.
+        let (mut here, mut tries) = (here, 0);
+        while site.terrain.sealed_in(here, (world.x, world.y, world.z), &outside, SEAL_CAP) {
+            tries += 1;
+            if tries > if last_pass { 12 } else { 6 } {
+                break;
+            }
+            site.terrain.avoid.insert(here);
+            site.approach(&mut rec, &positions[i..end]).map_err(|e| e.to_string())?;
+            here = feet_cell(rec.feet);
+            if !within_reach(rec.feet, world) || blocks_cell(here, world) {
+                break;
+            }
+        }
+        site.terrain.avoid.clear();
+        let sealed = site.terrain.sealed_in(here, (world.x, world.y, world.z), &outside, SEAL_CAP);
+        if !last_pass && sealed {
+            deferred.push(i);
+            continue;
+        }
+        if !within_reach(rec.feet, world) || blocks_cell(here, world) {
+            unreachable.push((world, format!("{}/out_of_reach", b.name)));
             continue;
         }
         let mut pl = pl;
@@ -115,7 +163,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             match support::find_chain(world, rec.feet, &can_click, &blocked) {
                 Some(c) => chain = c,
                 None => {
-                    unreachable.push((world, format!("{} (nothing to click against)", b.name)));
+                    unreachable.push((world, format!("{}/no_support", b.name)));
                     continue;
                 }
             }
@@ -124,7 +172,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             match placement::plan(&Block { pos: world, ..(*b).clone() }, with_chain) {
                 Action::Place(p2) if p2.clicks.iter().all(|c| with_chain(c.support) || c.support == world) => pl = p2,
                 _ => {
-                    unreachable.push((world, format!("{} (nothing to click against)", b.name)));
+                    unreachable.push((world, format!("{}/no_support", b.name)));
                     continue;
                 }
             }
@@ -137,6 +185,9 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             rec.steps.push(Step::Break(l.pos));
         }
         deviations += pl.unhonoured.len();
+        if last_pass {
+            site.finish(&mut rec).map_err(|e| e.to_string())?;
+        }
         placed.insert(world);
         site.terrain.add_block((world.x, world.y, world.z), crate::nav::is_standable_surface(&b.name, b.prop("type")));
         count += 1;
@@ -147,6 +198,13 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             cp_n += 1;
             rec.steps.push(Step::Checkpoint { n: cp_n, count, hash });
         }
+    }
+    if deferred.is_empty() || last_pass {
+        break;
+    }
+    site.finish(&mut rec).map_err(|e| e.to_string())?;
+    todo = deferred;
+    last_pass = true;
     }
     let left = site.finish(&mut rec).map_err(|e| e.to_string())?;
     if left > 0 {
@@ -162,6 +220,12 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     plan.header.protocol = protocol;
     plan.header.unreachable = unreachable;
     crate::slice_stats::fill(&mut plan, schem.blocks.len(), deviations);
+    if let Err(e) = sim::simulate(&plan, schem) {
+        if let Ok(p) = std::env::var("BUILDBOT_FAILED_PLAN") {
+            let _ = std::fs::write(p, plan.to_text());
+        }
+        return Err(format!("slicer bug: plan fails simulation at step {}: {}", e.step + 1, e.msg));
+    }
     sim::simulate(&plan, schem).map_err(|e| format!("slicer bug: plan fails simulation at step {}: {}", e.step, e.msg))?;
     Ok(plan)
 }

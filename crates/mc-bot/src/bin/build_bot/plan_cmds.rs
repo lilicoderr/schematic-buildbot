@@ -43,6 +43,13 @@ pub fn slice_cmd(args: &[String]) {
     for (k, v) in &plan.header.stats {
         println!("  {k}: {v}");
     }
+    let mut hist: std::collections::BTreeMap<&str, usize> = Default::default();
+    for (_, n) in &plan.header.unreachable {
+        *hist.entry(n.rsplit_once('/').map_or("?", |x| x.1)).or_default() += 1;
+    }
+    for (reason, n) in &hist {
+        println!("  unreachable by reason: {reason} x{n}");
+    }
     for (p, n) in plan.header.unreachable.iter().take(10) {
         println!("  unreachable: ({}, {}, {}) {n}", p.x, p.y, p.z);
     }
