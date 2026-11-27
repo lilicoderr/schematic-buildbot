@@ -78,3 +78,58 @@ pub fn simulate_cmd(args: &[String]) {
         Err(e) => fail(format!("step {}: {}", e.step + 1, e.msg)),
     }
 }
+
+/// `run <plan> [host:port] [--name N] [--rate R | --delay-ms N] [--verify]`
+pub fn run_cmd(args: &[String]) {
+    use mc_bot::builder::PlayClient;
+    let Some(path) = args.first() else { fail(tr!("usage: run <plan.bbplan> [host:port]", "사용법: run <plan.bbplan> [host:port]")) };
+    let plan = read_plan(path);
+    let target = args.get(1).filter(|a| !a.starts_with("--")).map(String::as_str).unwrap_or("127.0.0.1:25566");
+    let (host, port) = match target.rsplit_once(':') {
+        Some((h, p)) => (h.to_string(), p.parse().unwrap_or(25565)),
+        None => (target.to_string(), 25565),
+    };
+    let name = flag(args, "--name").unwrap_or_else(|| "BuildBot".into());
+    let delay = match (flag(args, "--rate"), flag(args, "--delay-ms")) {
+        (Some(r), _) => std::time::Duration::from_secs_f64(1.0 / r.parse::<f64>().unwrap_or(40.0).max(0.1)),
+        (None, Some(ms)) => std::time::Duration::from_millis(ms.parse().unwrap_or(25)),
+        _ => std::time::Duration::from_millis(25),
+    };
+    let (mut bot, _) = PlayClient::join_v(target, &host, port, &name, plan.header.protocol)
+        .unwrap_or_else(|e| fail(format!("{target}: {e}")));
+    if let Some(r) = &bot.kicked {
+        fail(tr!("kicked: {}", "킥됨: {}", r));
+    }
+    bot.place_delay = delay;
+    if let Err(e) = bot.land() {
+        fail(e.to_string());
+    }
+    println!("{}", tr!("running {} steps from ({:.1}, {:.1}, {:.1})", "{}단계 실행, 시작 ({:.1}, {:.1}, {:.1})", plan.steps.len(), bot.feet.x, bot.feet.y, bot.feet.z));
+    let opts = mc_bot::exec::Opts { verify: args.iter().any(|a| a == "--verify") };
+    let mut say = |m: &str| eprintln!("  {m}");
+    let r = mc_bot::exec::run(&mut bot, &plan, &opts, &mut say).unwrap_or_else(|e| fail(e.to_string()));
+    let placed_expected = plan.steps.iter().filter(|s| matches!(s, mc_bot::plan::Step::Place { .. })).count();
+    println!("{}", tr!("=== run finished ===", "=== 실행 종료 ==="));
+    println!(
+        "{}",
+        tr!(
+            "steps {}/{} | placed {}/{} | refused {} | re-placed {} | still missing {} | {:.0}s ({:.1} blocks/s) | kicks {} | teleports {}",
+            "단계 {}/{} | 설치 {}/{} | 거부 {} | 재설치 {} | 누락 {} | {:.0}초 ({:.1}블록/초) | 킥 {} | 텔레포트 {}",
+            r.steps_done, plan.steps.len(), r.placed, placed_expected, r.refused, r.repaired, r.missing.len(),
+            r.elapsed.as_secs_f64(), r.placed as f64 / r.elapsed.as_secs_f64().max(0.001), u8::from(r.kicked.is_some()), bot.teleports
+        )
+    );
+    if !r.windows.is_empty() {
+        let w: Vec<String> = r.windows.iter().map(|x| format!("{x:.1}")).collect();
+        println!("{}", tr!("blocks/s per 100 placements: {}", "100개당 블록/초: {}", w.join(" ")));
+    }
+    for p in r.missing.iter().take(20) {
+        println!("  missing: ({}, {}, {})", p.x, p.y, p.z);
+    }
+    if let Some(a) = &r.aborted {
+        println!("aborted: {a}");
+    }
+    if let Some(k) = &r.kicked {
+        println!("kicked: {k}");
+    }
+}

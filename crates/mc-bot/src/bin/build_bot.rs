@@ -144,6 +144,7 @@ fn main() {
         match cmd {
             "slice" => return plan_cmds::slice_cmd(rest),
             "simulate" => return plan_cmds::simulate_cmd(rest),
+            "run" => return plan_cmds::run_cmd(rest),
             _ => {}
         }
     }

@@ -147,7 +147,8 @@ fn place(w: &mut World, pos: BlockPos, state: &str, clicks: &[crate::plan::Click
     Ok(())
 }
 
-fn step_once(w: &mut World, st: &Step) -> Result<(), String> {
+/// Apply one step to the world model (legality checked); the executor uses it too.
+pub fn apply(w: &mut World, st: &Step) -> Result<(), String> {
     match st {
         Step::Move(to) => move_to(w, *to),
         Step::Pillar(c) => {
@@ -209,7 +210,7 @@ pub fn simulate(plan: &Plan, schem: &Schematic) -> Result<SimReport, SimError> {
     }
     let mut rep = SimReport::default();
     for (i, st) in plan.steps.iter().enumerate() {
-        step_once(&mut w, st).map_err(|msg| SimError { step: i, msg: format!("{st}: {msg}") })?;
+        apply(&mut w, st).map_err(|msg| SimError { step: i, msg: format!("{st}: {msg}") })?;
         match st {
             Step::Move(_) => rep.moves += 1,
             Step::Pillar(_) => rep.pillars += 1,

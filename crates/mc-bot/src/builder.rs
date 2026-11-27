@@ -383,6 +383,17 @@ impl PlayClient {
         self.idle(self.place_delay)
     }
 
+    /// Fall straight down to feet height `y` (after the block under us was broken).
+    pub fn fall_to(&mut self, y: f64) -> io::Result<()> {
+        while self.feet.y > y + 1e-9 && self.kicked.is_none() {
+            self.feet.y = (self.feet.y - FALL_STEP).max(y);
+            self.send_pos(false)?;
+            self.tick()?;
+        }
+        self.send_pos(true)?;
+        self.tick()
+    }
+
     /// Break a scaffold block within reach and wait for the server to apply it.
     pub fn break_block(&mut self, pos: BlockPos) -> io::Result<()> {
         self.dig(pos)?;
