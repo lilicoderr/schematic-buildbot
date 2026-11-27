@@ -144,12 +144,13 @@ what ran on a local vanilla server of that release (creative, offline).
 | 1.21 | 767 | ✅ (shares 1.21.1's) | not run separately |
 | 1.21.1 | 767 | ✅ | ✅ short builds; the 2408-block factory (earlier measurement) |
 | 1.21.4 | 769 | ✅ | ✅ short builds |
-| 26.3 | 777 | ✅ | ✅ short builds; 2408-block factory: 2408/2408 placed, 2407 exact (one log axis), 642 s, no kick |
+| 26.3 | 777 | ✅ | ✅ short builds; 2408-block factory: 2408/2408 placed, 2407 exact (the one log axis the slicer predicts offline), 568 s, no kick |
 
 "Short builds" (2026-11), each started on a cleared area and compared block by block over RCON: `cottage.txt` 25/25,
-`stair-tower.txt` 51/51, a 5-wide 9-high wall 45/45 (builds and removes scaffold) and three single chests in a row 3/3
-(needs sneaking), all exact through the plan pipeline (sprinting); `state-lab.txt` 26/27 (the same `oak_log[axis=x]`
-differs on 1.20.4, 1.21.1, 1.21.4 and 26.3). `stair-tower.txt` in direct mode: 51/51 confirmed by the server's block
+`stair-tower.txt` 51/51, a 5-wide 9-high wall 45/45 (builds and removes scaffold), three single chests in a row 3/3
+(needs sneaking) and
+`state-lab.txt` 27/27, all exact through the plan pipeline (sprinting) on 1.20.4, 1.21.1, 1.21.4 and 26.3.
+`stair-tower.txt` in direct mode: 51/51 confirmed by the server's block
 updates. No kicks.
 Survival mode, online mode, Paper/Spigot and releases not listed are untested. Differences between releases:
 [docs/RE/versions.md](docs/RE/versions.md).
