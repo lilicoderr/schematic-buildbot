@@ -4,7 +4,7 @@
 //! scaffold block we stand on). A* with a bounded node budget; the bot never flies.
 
 use crate::nav::{blocks_cell, cell_feet, Cell, Terrain};
-use crate::world::{within_reach, BlockPos};
+use crate::world::{within_reach, BlockPos, Face};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
@@ -14,6 +14,9 @@ pub enum Act {
     Walk(Cell),
     /// Place a scaffold floor under the (level, adjacent) cell and step onto it.
     Bridge(Cell),
+    /// Place a scaffold floor 1 or 2 below the usual floor level, beside a solid block and drop onto it
+    /// (the way down the side of a tall wall or chimney).
+    StepDown(Cell),
     /// Put a scaffold block into the current feet cell and land on it; the cell is the new feet.
     Pillar(Cell),
     /// Break the scaffold block under the feet and fall to the cell.
@@ -23,7 +26,7 @@ pub enum Act {
 impl Act {
     pub fn to(self) -> Cell {
         match self {
-            Act::Walk(c) | Act::Bridge(c) | Act::Pillar(c) | Act::Dig(c) => c,
+            Act::Walk(c) | Act::Bridge(c) | Act::StepDown(c) | Act::Pillar(c) | Act::Dig(c) => c,
         }
     }
     fn cost(self, from: Cell) -> u32 {
@@ -32,6 +35,7 @@ impl Act {
             Act::Walk(_) => 6,
             Act::Bridge(_) | Act::Pillar(_) => 14,
             Act::Dig(_) => 8,
+            Act::StepDown(_) => 18,
         }
     }
 }
@@ -42,12 +46,18 @@ pub struct Query<'a> {
     pub scaffold: &'a HashSet<Cell>,
     /// Cells no new scaffold may be put into.
     pub keep_free: &'a [Cell],
+    /// More such cells (cleanup: where scaffold was already taken away, so it never comes back).
+    pub spent: Option<&'a HashSet<Cell>>,
     pub max_nodes: usize,
 }
 
 impl Query<'_> {
     fn free(&self, c: Cell) -> bool {
         !self.terrain.solid(c)
+    }
+
+    fn may_build(&self, c: Cell) -> bool {
+        !self.keep_free.contains(&c) && self.spent.is_none_or(|s| !s.contains(&c))
     }
 
     /// Moves from `c`. `built` says the floor under `c` is scaffold planned earlier on this path.
@@ -58,11 +68,12 @@ impl Query<'_> {
         for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let n = (x + dx, y, z + dz);
             let floor = (n.0, y - 1, n.2);
-            if y > t.ground_y && self.free(n) && self.free((n.0, y + 1, n.2)) && self.free(floor) && !self.keep_free.contains(&floor) {
+            if y > t.ground_y && self.free(n) && self.free((n.0, y + 1, n.2)) && self.free(floor) && self.may_build(floor) {
                 out.push(Act::Bridge(n));
             }
         }
-        if y < t.sky_top + 2 && self.free((x, y + 2, z)) && self.free((x, y + 1, z)) && !self.keep_free.contains(&c) {
+        out.extend(self.step_downs(c).into_iter().map(Act::StepDown));
+        if y < t.sky_top + 2 && self.free((x, y + 2, z)) && self.free((x, y + 1, z)) && self.may_build(c) {
             out.push(Act::Pillar((x, y + 1, z)));
         }
         if self.scaffold.contains(&(x, y - 1, z)) {
@@ -81,6 +92,38 @@ impl Query<'_> {
         out
     }
 
+    fn step_downs(&self, c: Cell) -> Vec<Cell> {
+        let (x, y, z) = c;
+        let t = self.terrain;
+        let mut out = Vec::new();
+        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let (nx, nz) = (x + dx, z + dz);
+            // drop 1 or 2 (3 would put the new block out of placing reach): the floor goes into free air that has something solid beside it
+            for drop in [2, 1] {
+                let to = (nx, y - drop, nz);
+                let floor = (nx, to.1 - 1, nz);
+                if floor.1 >= t.ground_y
+                    && self.may_build(floor)
+                    && (floor.1..=y + 1).all(|yy| self.free((nx, yy, nz)))
+                    && self.side_support(floor).is_some()
+                {
+                    out.push(to);
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    /// A block beside `floor` that a new floor block there can be clicked against.
+    pub fn side_support(&self, floor: Cell) -> Option<(Cell, Face)> {
+        Face::HORIZONTAL.iter().find_map(|&f| {
+            let (dx, _, dz) = f.offset();
+            let s = (floor.0 + dx, floor.1, floor.2 + dz);
+            (s.1 >= self.terrain.ground_y && self.terrain.carries(s)).then(|| (s, f.opposite()))
+        })
+    }
+
     /// Cheapest act sequence from `start` to a cell satisfying `goal`; `aim` guides the search.
     pub fn search(&self, start: Cell, aim: BlockPos, goal: &dyn Fn(Cell) -> bool) -> Option<Vec<Act>> {
         let h = |c: Cell| -> u32 {
@@ -89,6 +132,15 @@ impl Query<'_> {
             // weighted (x1.5): far faster than exact A*, routes stay near the shortest
             (flat * 6 + up * 12) as u32
         };
+        self.best_first(start, &h, goal)
+    }
+
+    /// Cheapest act sequence to whichever cell satisfying `goal` is nearest.
+    pub fn nearest(&self, start: Cell, goal: &dyn Fn(Cell) -> bool) -> Option<Vec<Act>> {
+        self.best_first(start, &|_| 0, goal)
+    }
+
+    fn best_first(&self, start: Cell, h: &dyn Fn(Cell) -> u32, goal: &dyn Fn(Cell) -> bool) -> Option<Vec<Act>> {
         let mut best: HashMap<Cell, u32> = HashMap::from([(start, 0)]);
         let mut came: HashMap<Cell, (Cell, Act)> = HashMap::new();
         let mut open = BinaryHeap::from([Reverse((h(start), 0u32, start))]);

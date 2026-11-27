@@ -9,10 +9,14 @@ use crate::builder::PlayClient;
 use crate::nav::{blocks_cell, cell_feet, feet_cell, Cell, Terrain};
 use crate::navplan::{Act, Query};
 use crate::plan::ClickStep;
+use crate::wayhome::WayHome;
 use crate::world::{eye_to_box, within_reach, BlockPos, Face, Vec3, CLICK_REACH};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
+
+#[path = "cleanup.rs"]
+mod cleanup;
 
 /// Node budget of one scaffold-navigation search.
 const SEARCH_NODES: usize = 60_000;
@@ -74,8 +78,14 @@ pub struct Timing {
 /// still standing.
 pub struct Site {
     pub terrain: Terrain,
-    /// Ordered so that planning is deterministic.
-    scaffold: BTreeSet<Cell>,
+    /// Never iterated where the order could change the plan.
+    scaffold: HashSet<Cell>,
+    /// During cleanup: cells whose scaffold was removed twice (never rebuilt, so cleanup
+    /// terminates), and those removed once.
+    spent: Option<HashSet<Cell>>,
+    removed: HashSet<Cell>,
+    /// During cleanup: the last way down found (dropped whenever a block is added).
+    way: Option<WayHome>,
     pub timing: Timing,
 }
 
@@ -85,16 +95,17 @@ fn pos(c: Cell) -> BlockPos {
 
 impl Site {
     pub fn new(terrain: Terrain) -> Self {
-        Site { terrain, scaffold: BTreeSet::new(), timing: Timing::default() }
-    }
-
-    fn scaffold_set(&self) -> HashSet<Cell> {
-        self.scaffold.iter().copied().collect()
+        Site { terrain, scaffold: HashSet::new(), spent: None, removed: HashSet::new(), way: None, timing: Timing::default() }
     }
 
     fn forget(&mut self, c: Cell) {
         self.terrain.remove_block(c);
         self.scaffold.remove(&c);
+        if let Some(s) = &mut self.spent {
+            if !self.removed.insert(c) {
+                s.insert(c);
+            }
+        }
         self.timing.pillars_removed += 1;
     }
 
@@ -117,7 +128,22 @@ impl Site {
     fn safe_without(&mut self, here: Cell, c: Cell) -> bool {
         self.terrain.remove_block(c);
         self.scaffold.remove(&c);
-        let ok = self.grounded(here);
+        // the answer must hold after `forget(c)`, which may bar rebuilding there
+        let bars = self.removed.contains(&c) && self.spent.as_mut().is_some_and(|s| s.insert(c));
+        let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: self.spent.as_ref(), max_nodes: 0 };
+        let known = self.way.as_ref().is_some_and(|w| w.still_leads_down(&query, here, c));
+        let ground = self.terrain.ground_y;
+        let ok = known || here.1 <= ground || {
+            let found = self.search(here, BlockPos::new(here.0, ground, here.2), &|g| g.1 <= ground, &[]);
+            if let (Some(acts), true) = (&found, self.spent.is_some()) {
+                let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: None, max_nodes: 0 };
+                self.way = Some(WayHome::new(&query, here, acts));
+            }
+            found.is_some()
+        };
+        if let (true, Some(s)) = (bars, &mut self.spent) {
+            s.remove(&c);
+        }
         self.terrain.add_block(c, true);
         self.scaffold.insert(c);
         ok
@@ -129,8 +155,7 @@ impl Site {
         self.timing.routes += 1;
         for act in acts {
             let here = feet_cell(bot.feet());
-            let scaffold = self.scaffold_set();
-            let query = Query { terrain: &self.terrain, scaffold: &scaffold, keep_free: &[], max_nodes: 0 };
+            let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: self.spent.as_ref(), max_nodes: 0 };
             if bot.kicked() || !query.acts(here).contains(act) {
                 break;
             }
@@ -146,6 +171,14 @@ impl Site {
                     let face = Face::HORIZONTAL.iter().copied().find(|f| from.offset(*f) == floor).expect("adjacent");
                     bot.place_support(floor, &ClickStep { support: from, face, cursor: crate::support::face_cursor(face) })?;
                     self.add_scaffold((floor.x, floor.y, floor.z));
+                    bot.walk_cells(&[here, to])?;
+                    self.timing.steps += 1;
+                }
+                Act::StepDown(to) => {
+                    let floor = (to.0, to.1 - 1, to.2);
+                    let (s, face) = query.side_support(floor).expect("checked by acts");
+                    bot.place_support(pos(floor), &ClickStep { support: pos(s), face, cursor: crate::support::face_cursor(face) })?;
+                    self.add_scaffold(floor);
                     bot.walk_cells(&[here, to])?;
                     self.timing.steps += 1;
                 }
@@ -168,6 +201,7 @@ impl Site {
     }
 
     fn add_scaffold(&mut self, c: Cell) {
+        self.way = None;
         self.terrain.add_block(c, true);
         self.scaffold.insert(c);
         self.timing.pillars_built += 1;
@@ -175,8 +209,17 @@ impl Site {
 
     fn search(&mut self, from: Cell, aim: BlockPos, goal: &dyn Fn(Cell) -> bool, keep_free: &[Cell]) -> Option<Vec<Act>> {
         let t = Instant::now();
-        let scaffold = self.scaffold_set();
-        let found = Query { terrain: &self.terrain, scaffold: &scaffold, keep_free, max_nodes: SEARCH_NODES }.search(from, aim, goal);
+        let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free, spent: self.spent.as_ref(), max_nodes: SEARCH_NODES };
+        let found = query.search(from, aim, goal);
+        self.timing.search += t.elapsed();
+        found
+    }
+
+    /// Like `search`, but plain cheapest-first towards whatever cell satisfies `goal`.
+    fn nearest(&mut self, from: Cell, goal: &dyn Fn(Cell) -> bool) -> Option<Vec<Act>> {
+        let t = Instant::now();
+        let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: self.spent.as_ref(), max_nodes: SEARCH_NODES };
+        let found = query.nearest(from, goal);
         self.timing.search += t.elapsed();
         found
     }
@@ -227,13 +270,7 @@ impl Site {
             let here = feet_cell(bot.feet());
             if c == (here.0, here.1 - 1, here.2) {
                 // the fall rule (and its checks) live in the search: use its dig move
-                let scaffold = self.scaffold_set();
-                let query = Query { terrain: &self.terrain, scaffold: &scaffold, keep_free: &[], max_nodes: 0 };
-                let land = query.acts(here).into_iter().find_map(|a| match a {
-                    Act::Dig(to) => Some(to.1),
-                    _ => None,
-                });
-                if let Some(land) = land {
+                if let Some(land) = self.dig_landing(here) {
                     bot.dig_down(pos(c), land)?;
                     self.forget(c);
                     return Ok(true);
@@ -258,39 +295,5 @@ impl Site {
             self.perform(bot, &acts)?;
         }
         Ok(!self.scaffold.contains(&c))
-    }
-
-    /// Remove every remaining scaffold block, highest first. Returns how many could not be removed.
-    pub fn finish(&mut self, bot: &mut impl Mover) -> io::Result<usize> {
-        self.finish_while(bot, &mut |_| true)
-    }
-
-    /// [`Site::finish`] that stops as soon as `keep_going(blocks left)` says so.
-    pub fn finish_while(&mut self, bot: &mut impl Mover, keep_going: &mut dyn FnMut(usize) -> bool) -> io::Result<usize> {
-        let mut failed: HashSet<Cell> = HashSet::new();
-        while !bot.kicked() && keep_going(self.scaffold.len()) {
-            // highest first, nearest among equals; blocks that failed are retried after progress
-            let here = feet_cell(bot.feet());
-            let next = self
-                .scaffold
-                .iter()
-                .copied()
-                .filter(|c| !failed.contains(c))
-                .max_by_key(|c| (c.1, -((c.0 - here.0).abs() + (c.2 - here.2).abs())));
-            let Some(c) = next else { break };
-            let before = self.scaffold.len();
-            self.clear_one(bot, c)?;
-            if self.scaffold.len() < before {
-                failed.clear();
-            }
-            if self.scaffold.contains(&c) {
-                failed.insert(c);
-            }
-        }
-        if !self.scaffold.is_empty() && std::env::var("BUILDBOT_DEBUG").is_ok() {
-            let here = feet_cell(bot.feet());
-            eprintln!("left standing: {:?}; bot at {here:?}", self.scaffold);
-        }
-        Ok(self.scaffold.len())
     }
 }

@@ -39,4 +39,5 @@ pub mod tour;
 pub mod schematic;
 pub mod verify;
 pub mod version;
+pub mod wayhome;
 pub mod world;
