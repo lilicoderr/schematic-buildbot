@@ -68,7 +68,35 @@ pub fn read_frame<R: Read>(reader: &mut R, threshold: Option<usize>) -> io::Resu
     let frame_len = read_varint_from(reader)? as usize;
     let mut frame = vec![0u8; frame_len];
     reader.read_exact(&mut frame)?;
+    decode_frame(frame, threshold)
+}
 
+/// Parse one complete frame from the front of `buf` without consuming anything on failure.
+/// Returns `Ok(None)` while the frame is still incomplete, otherwise the bytes used plus the
+/// packet. Unlike [`read_frame`], this survives read timeouts in the middle of a frame.
+pub fn try_parse_frame(buf: &[u8], threshold: Option<usize>) -> io::Result<Option<(usize, i32, PacketBuf)>> {
+    let mut len: u32 = 0;
+    let mut used = 0;
+    loop {
+        let Some(&b) = buf.get(used) else { return Ok(None) };
+        len |= ((b & 0x7F) as u32) << (7 * used);
+        used += 1;
+        if b & 0x80 == 0 {
+            break;
+        }
+        if used >= 5 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "VarInt too long"));
+        }
+    }
+    let end = used + len as usize;
+    if buf.len() < end {
+        return Ok(None);
+    }
+    let (id, body) = decode_frame(buf[used..end].to_vec(), threshold)?;
+    Ok(Some((end, id, body)))
+}
+
+fn decode_frame(frame: Vec<u8>, threshold: Option<usize>) -> io::Result<(i32, PacketBuf)> {
     let packet_bytes = match threshold {
         None => frame,
         Some(_) => {

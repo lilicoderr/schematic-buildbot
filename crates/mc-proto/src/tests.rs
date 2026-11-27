@@ -135,3 +135,29 @@ fn multiple_frames_in_stream() {
     assert_eq!((id1, p1.read_rest()), (1, b"aaa".to_vec()));
     assert_eq!((id2, p2.read_rest()), (2, b"bbbb".to_vec()));
 }
+
+#[test]
+fn partial_frame_waits_then_parses() {
+    let body: Vec<u8> = (0..200u8).collect();
+    for threshold in [None, Some(64)] {
+        let wire = frame::encode(0x27, &body, threshold);
+        // Every strict prefix (a read timeout mid-frame) must report "incomplete", never an error.
+        for cut in 0..wire.len() {
+            assert!(frame::try_parse_frame(&wire[..cut], threshold).unwrap().is_none(), "cut {cut}");
+        }
+        let (used, id, mut pb) = frame::try_parse_frame(&wire, threshold).unwrap().unwrap();
+        assert_eq!((used, id), (wire.len(), 0x27));
+        assert_eq!(pb.read_rest(), body);
+    }
+}
+
+#[test]
+fn back_to_back_frames_are_split_correctly() {
+    let mut wire = frame::encode(1, b"abc", None);
+    wire.extend(frame::encode(2, b"defg", None));
+    let (used, id, _) = frame::try_parse_frame(&wire, None).unwrap().unwrap();
+    assert_eq!(id, 1);
+    let (_, id2, mut pb) = frame::try_parse_frame(&wire[used..], None).unwrap().unwrap();
+    assert_eq!(id2, 2);
+    assert_eq!(pb.read_rest(), b"defg");
+}

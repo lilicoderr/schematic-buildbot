@@ -3,12 +3,14 @@
 use mc_proto::buf::PacketBuf;
 use mc_proto::frame;
 use mc_proto::State;
-use std::io::{self, BufReader, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
 pub struct Connection {
-    reader: BufReader<TcpStream>,
+    reader: TcpStream,
+    /// Bytes received but not yet parsed; a frame split by a read timeout stays here intact.
+    inbox: Vec<u8>,
     writer: TcpStream,
     threshold: Option<usize>,
     pub state: State,
@@ -20,7 +22,8 @@ impl Connection {
         stream.set_nodelay(true).ok();
         let writer = stream.try_clone()?;
         Ok(Self {
-            reader: BufReader::new(stream),
+            reader: stream,
+            inbox: Vec::new(),
             writer,
             threshold: None,
             state: State::Handshaking,
@@ -28,7 +31,7 @@ impl Connection {
     }
 
     pub fn set_read_timeout(&mut self, dur: Option<Duration>) -> io::Result<()> {
-        self.reader.get_ref().set_read_timeout(dur)
+        self.reader.set_read_timeout(dur)
     }
 
     /// Set the compression threshold after Set Compression. None = uncompressed.
@@ -45,8 +48,19 @@ impl Connection {
         self.writer.flush()
     }
 
-    /// Receive one packet → (id, body buffer).
+    /// Receive one packet → (id, body buffer). A timeout keeps any partial frame for the next call.
     pub fn recv(&mut self) -> io::Result<(i32, PacketBuf)> {
-        frame::read_frame(&mut self.reader, self.threshold)
+        let mut chunk = [0u8; 16 * 1024];
+        loop {
+            if let Some((used, id, body)) = frame::try_parse_frame(&self.inbox, self.threshold)? {
+                self.inbox.drain(..used);
+                return Ok((id, body));
+            }
+            let n = self.reader.read(&mut chunk)?;
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed"));
+            }
+            self.inbox.extend_from_slice(&chunk[..n]);
+        }
     }
 }
