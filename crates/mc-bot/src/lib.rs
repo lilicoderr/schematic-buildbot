@@ -24,6 +24,7 @@ pub mod sim;
 pub mod slice;
 pub mod slice_stats;
 pub mod support;
+pub mod text;
 pub mod tour;
 pub mod schematic;
 pub mod version;

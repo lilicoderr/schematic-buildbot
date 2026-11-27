@@ -66,6 +66,16 @@ pub fn read(bytes: &[u8]) -> Result<(String, Nbt), String> {
     Ok((name, value))
 }
 
+/// Network NBT as used by play/configuration packets since 1.20.2: the root tag has no name.
+pub fn read_network(bytes: &[u8]) -> Result<Nbt, String> {
+    let mut cur = Cursor { data: bytes, pos: 0 };
+    let tag = cur.u8()?;
+    if tag == 0 {
+        return Ok(Nbt::End);
+    }
+    cur.payload(tag)
+}
+
 fn decompress(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
         let mut out = Vec::new();

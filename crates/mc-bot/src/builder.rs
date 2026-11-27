@@ -149,8 +149,8 @@ impl PlayClient {
                         }
                     }
                     ids::CB_PLAY_DISCONNECT => {
-                        let reason = body.read_string().unwrap_or_default();
-                        self.kicked = Some(reason);
+                        // play-state reason is a network NBT component (docs/RE/protocol.md)
+                        self.kicked = Some(crate::text::disconnect_reason(&mut body));
                     }
                     ids::CB_PLAY_UPDATE_HEALTH => {
                         let health = body.read_f32().unwrap_or(20.0);

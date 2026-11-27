@@ -137,7 +137,7 @@ pub fn login_offline_v(
                 break;
             }
             ids::CB_CONFIG_DISCONNECT => {
-                let reason = body.read_string().unwrap_or_default();
+                let reason = crate::text::disconnect_reason(&mut body);
                 return Err(io::Error::new(io::ErrorKind::ConnectionRefused, tr!("configuration refused: {}", "설정 단계 거부: {}", reason)));
             }
             _ => {}
