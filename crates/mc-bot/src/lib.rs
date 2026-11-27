@@ -11,6 +11,8 @@ pub mod nbt;
 pub mod net;
 pub mod path;
 pub mod placement;
+pub mod plan;
+pub mod plan_parse;
 pub mod progress;
 pub mod proto;
 pub mod scaffold;
