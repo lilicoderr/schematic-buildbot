@@ -65,3 +65,32 @@ Live results (vanilla 1.21.1, tall flat world, small factory 2408 blocks, plan f
 
 Large factory (22k): `slice` takes 12+ minutes (BFS fallback radius 160) and has not produced a clean plan yet; see the last
 commit for the state. Not run live. Screenshots not done (prismarine-viewer cannot render negative Y; tall flat world configured).
+
+
+## Update 2026-11-28: live pipeline (lead builder)
+
+Work is now split across agents (planner speed, block states, tables, viewer, review). This section covers the live pipeline.
+
+Live, small factory (2408 blocks), local vanilla 1.21.1 (2 GB heap), `slice` then `run --verify`:
+
+| run | code | time | blocks/s | re-placed | missing | state diffs | kicks |
+|---|---|---|---|---|---|---|---|
+| run4 | continuous walking + sprint, before the review fixes | 722 s | 3.3 | 91 (after a 9.9 s server stall) | 0 | 1 | 0 |
+| run5 | after review fixes 5704486/ef54a94 (independent checker) | 635 s | 3.8 | 0 | 0 | 1 (RCON check) | 0 |
+| run6 | + place-everything-in-reach batching (7c6ab4d) | 567 s | 4.2 | 0 | 0 | 1 (built-in diff) | 0 |
+
+The one differing state is a log placed with no side face to click yet (`stripped_dark_oak_log[axis=z]` became y);
+`slice` lists it as a fallback instead of claiming an exact result. The run4 stall: the log shows "Can't keep up,
+9883 ms behind", then "moved too quickly" (queued moves add up). `run` now walks back and re-places right after any
+server teleport (covered by `tests/run_mock.rs`; no live teleport happened in run5/run6).
+
+Target of 5 blocks/s is NOT reached. 502 of 567 s are movement (2366 moves, many jumps in the machine layers) and the
+curve is not flat: about 19 blocks/s on the first layers, 2 to 5 in the middle. Next lever: a better in-layer tour and
+standing-cell choice; sprint is already at vanilla speed.
+
+Large factory: NOT run live. At 7c6ab4d `slice` gives up at a 90 s limit in the deferred-block phase
+(22439 placed so far); planner work continues. Screenshots belong to the viewer work.
+
+`run` options: sprint by default (`--walk` disables), `--delay-ms` (default 10), `--resume` (progress file next to the
+plan; unit-tested only, not exercised live), `--verify`. Temporary supports are confirmed by block update.
+Test server: `scratchpad\mcserver` as above, `-Xmx2G`, below-normal priority; stopped via RCON after run6.
