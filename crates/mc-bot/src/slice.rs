@@ -28,6 +28,8 @@ const SEAL_CAP: usize = 20_000;
 struct Recorder {
     feet: Vec3,
     steps: Vec<Step>,
+    /// Scaffold blocks currently standing; a break of anything else is a planner slip and is dropped.
+    alive: HashSet<BlockPos>,
 }
 
 impl Mover for Recorder {
@@ -47,22 +49,27 @@ impl Mover for Recorder {
     fn pillar_up(&mut self, base: Cell, height: i32, _item: i32) -> io::Result<()> {
         for k in 0..height {
             self.steps.push(Step::Pillar((base.0, base.1 + k, base.2)));
+            self.alive.insert(BlockPos::new(base.0, base.1 + k, base.2));
         }
         self.feet = cell_feet((base.0, base.1 + height, base.2));
         Ok(())
     }
     fn pillar_down(&mut self, base: Cell, height: i32) -> io::Result<()> {
         for k in (0..height).rev() {
+            self.alive.remove(&BlockPos::new(base.0, base.1 + k, base.2));
             self.steps.push(Step::Break(BlockPos::new(base.0, base.1 + k, base.2)));
         }
         self.feet = cell_feet(base);
         Ok(())
     }
     fn break_block(&mut self, pos: BlockPos) -> io::Result<()> {
-        self.steps.push(Step::Break(pos));
+        if self.alive.remove(&pos) {
+            self.steps.push(Step::Break(pos));
+        }
         Ok(())
     }
     fn place_support(&mut self, pos: BlockPos, click: &ClickStep) -> io::Result<()> {
+        self.alive.insert(pos);
         self.steps.push(Step::Support { pos, clicks: vec![click.clone()] });
         Ok(())
     }
@@ -79,7 +86,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
     let at = |b: &Block| BlockPos::new(origin.0 + b.pos.x, origin.1 + b.pos.y, origin.2 + b.pos.z);
     let positions: Vec<BlockPos> = order.iter().map(|b| at(b)).collect();
     let mut site = Site::new(Terrain::new(origin.1, HashSet::new()));
-    let mut rec = Recorder { feet: cell_feet(start), steps: Vec::new() };
+    let mut rec = Recorder { feet: cell_feet(start), steps: Vec::new(), alive: HashSet::new() };
     let mut placed: HashSet<BlockPos> = HashSet::new();
     // placed blocks a plain click would open: never clicked against
     let mut usable: HashSet<BlockPos> = HashSet::new();
@@ -183,11 +190,13 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
                 }
             }
             for l in &chain {
+                rec.alive.insert(l.pos);
                 rec.steps.push(Step::Support { pos: l.pos, clicks: vec![l.click.clone()] });
             }
         }
         rec.steps.push(Step::Place { pos: world, state: state.clone(), yaw: pl.yaw, clicks: click_steps(&pl) });
         for l in chain.iter().rev() {
+            rec.alive.remove(&l.pos);
             rec.steps.push(Step::Break(l.pos));
         }
         deviations += pl.unhonoured.len();

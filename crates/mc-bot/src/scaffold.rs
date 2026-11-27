@@ -15,7 +15,7 @@ use std::io;
 use std::time::{Duration, Instant};
 
 /// Tallest pillar planned in one go.
-pub const MAX_HEIGHT: i32 = 24;
+pub const MAX_HEIGHT: i32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pillar {
@@ -202,7 +202,7 @@ impl Site {
 
     /// Break, from where the bot stands, the top blocks of every pillar that are within reach
     /// (never a pillar the bot stands over). Cheap, no walking; keeps pillars from being stranded.
-    fn sweep_nearby(&mut self, bot: &mut impl Mover) -> io::Result<()> {
+    fn sweep_nearby(&mut self, bot: &mut impl Mover, protect: &HashSet<Cell>) -> io::Result<()> {
         let feet = bot.feet();
         let here = feet_cell(feet);
         let mut i = 0;
@@ -215,7 +215,7 @@ impl Site {
                 let p = &self.pillars[i];
                 let c = (p.base.0, p.base.1 + p.height - 1, p.base.2);
                 let target = BlockPos::new(c.0, c.1, c.2);
-                if eye_to_box(feet, target) > CLICK_REACH {
+                if eye_to_box(feet, target) > CLICK_REACH || protect.contains(&c) {
                     break;
                 }
                 bot.break_block(target)?;
@@ -258,7 +258,6 @@ impl Site {
     fn walk(&mut self, bot: &mut impl Mover, route: &[Cell]) -> io::Result<()> {
         self.timing.routes += 1;
         self.timing.steps += route.len().saturating_sub(1) as u32;
-        let off_pillar = route.first().is_some_and(|c| self.pillars.iter().any(|p| p.top() == *c));
         for (k, pair) in route.windows(2).enumerate() {
             let t = Instant::now();
             bot.walk_cells(pair)?;
@@ -266,11 +265,9 @@ impl Site {
             if bot.kicked() {
                 break;
             }
-            if k == 0 && off_pillar {
-                self.sweep_nearby(bot)?;
-            }
-            if !self.bridges.is_empty() {
+            if !self.bridges.is_empty() || !self.pillars.is_empty() {
                 let ahead: HashSet<Cell> = route[k + 1..].iter().map(|c| (c.0, c.1 - 1, c.2)).collect();
+                self.sweep_nearby(bot, &ahead)?;
                 self.sweep_bridges(bot, &ahead)?;
             }
         }
@@ -305,11 +302,15 @@ impl Site {
         if self.can_place_from_here(bot, first) {
             return Ok(());
         }
-        self.sweep_nearby(bot)?;
+        self.sweep_nearby(bot, &HashSet::new())?;
         self.sweep_bridges(bot, &HashSet::new())?;
         let start = feet_cell(bot.feet());
         let t = Instant::now();
-        let route = self.terrain.route_for_run(start, upcoming, 24, 40_000);
+        let mut route = self.terrain.route_for_run(start, upcoming, 24, 40_000);
+        if route.is_none() {
+            // big sites: the block may be a long walk away
+            route = self.terrain.route_for_run(start, upcoming, 160, 400_000);
+        }
         self.timing.search += t.elapsed();
         if let Some(route) = route {
             return self.walk(bot, &route);
@@ -348,9 +349,14 @@ impl Site {
                 let from = BlockPos::new(cur.0, cur.1 - 1, cur.2);
                 let face = Face::HORIZONTAL.iter().copied().find(|f| from.offset(*f) == floor).unwrap();
                 let click = crate::plan::ClickStep { support: from, face, cursor: crate::support::face_cursor(face) };
+                if std::env::var("BUILDBOT_TRACE").is_ok() {
+                    eprintln!("bridge floor {floor:?} from {cur:?}");
+                }
                 bot.place_support(floor, &click)?;
                 self.terrain.add_block((floor.x, floor.y, floor.z), true);
-                self.bridges.push((floor.x, floor.y, floor.z));
+                if !self.bridges.contains(&(floor.x, floor.y, floor.z)) {
+                    self.bridges.push((floor.x, floor.y, floor.z));
+                }
             }
             self.walk(bot, &[cur, h.to])?;
             cur = h.to;
@@ -361,6 +367,26 @@ impl Site {
         Ok(())
     }
 
+    /// Last resort for cleaning up: bridge to a standing spot that reaches `target` (never above it).
+    fn reach_by_bridge(&mut self, bot: &mut impl Mover, target: BlockPos) -> io::Result<bool> {
+        let above: Vec<Cell> = (1..=8).map(|d| (target.x, target.y + d, target.z)).collect();
+        for c in &above {
+            self.terrain.avoid.insert(*c);
+        }
+        let start = feet_cell(bot.feet());
+        let hops = crate::bridge::plan_bridge(&self.terrain, start, target, 40, 80_000);
+        for c in &above {
+            self.terrain.avoid.remove(c);
+        }
+        match hops {
+            Some(h) => {
+                self.walk_hops(bot, start, &h)?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// Break the bridge floor `c`: from where we stand if possible, else after walking to a spot
     /// that reaches it (never from above it). False if no such spot exists.
     fn remove_bridge(&mut self, bot: &mut impl Mover, c: Cell) -> io::Result<bool> {
@@ -369,8 +395,14 @@ impl Site {
         let here = feet_cell(bot.feet());
         if !(reach(here) && self.terrain.can_stand(here)) {
             let goal = |g: Cell| self.terrain.can_stand(g) && reach(g);
-            let Some(route) = self.terrain.route(here, &goal, 40, 60_000) else { return Ok(false) };
-            self.walk(bot, &route)?;
+            match self.terrain.route(here, &goal, 40, 60_000) {
+                Some(route) => self.walk(bot, &route)?,
+                None => {
+                    if !self.reach_by_bridge(bot, target)? {
+                        return Ok(false);
+                    }
+                }
+            }
         }
         bot.break_block(target)?;
         self.terrain.remove_block(c);
@@ -385,6 +417,9 @@ impl Site {
         let mut keep = Vec::new();
         for c in std::mem::take(&mut self.bridges) {
             let target = BlockPos::new(c.0, c.1, c.2);
+            if !self.terrain.solid(c) || keep.contains(&c) {
+                continue; // already gone (or listed twice): never break a block that is not ours
+            }
             let under_us = here.0 == c.0 && here.2 == c.2 && here.1 > c.1;
             if !under_us && !protect.contains(&c) && eye_to_box(feet, target) <= CLICK_REACH {
                 bot.break_block(target)?;
@@ -402,6 +437,9 @@ impl Site {
             return Ok(());
         }
         let t = Instant::now();
+        if std::env::var("BUILDBOT_TRACE").is_ok() {
+            eprintln!("build {pillar:?} from {:?}", feet_cell(bot.feet()));
+        }
         bot.pillar_up(pillar.base, pillar.height, item)?;
         self.timing.pillar += t.elapsed();
         self.timing.pillars_built += 1;
