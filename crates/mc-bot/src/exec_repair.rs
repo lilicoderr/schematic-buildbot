@@ -41,6 +41,13 @@ pub fn missing(bot: &PlayClient, world: &World, sent: &Sent, off: Offset) -> Vec
         .map(|c| off.pos(BlockPos::new(c.0, c.1, c.2)))
         .filter(|p| sent.contains_key(p) && !bot.blocks.is_confirmed(*p))
         .collect();
+    // a refused second click leaves a single slab: confirmed, but not done
+    for (c, s) in &world.blocks {
+        let p = off.pos(BlockPos::new(c.0, c.1, c.2));
+        if sent.contains_key(&p) && bot.blocks.is_confirmed(p) && crate::verify::half_done_double_slab(s, bot.blocks.state(p)) {
+            out.push(p);
+        }
+    }
     out.sort_by_key(|p| (p.y, p.x, p.z));
     out
 }

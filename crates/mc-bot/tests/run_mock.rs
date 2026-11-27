@@ -124,5 +124,7 @@ fn replays_a_plan_and_repairs_a_placement_the_server_dropped() {
     assert_eq!(steps_seen, plan.steps.len());
     assert!(report.repaired >= 1, "the dropped block was placed again: {log:?}");
     assert!(report.missing.is_empty(), "missing {:?}", report.missing);
+    // the mock confirms every block with state id 1, which is stone
+    assert!(report.differs.is_empty(), "differs {:?}", report.differs);
     assert_eq!(report.resyncs, 1, "the rejected move was noticed: {log:?}");
 }

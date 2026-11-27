@@ -46,7 +46,7 @@ pub fn slice_cmd(args: &[String]) {
     println!("{}", tr!("sliced '{}' in {:.1}s -> {}", "'{}' 슬라이스 {:.1}초 -> {}", schem.name, t.elapsed().as_secs_f64(), out));
     let t = slice::last_times();
     println!("  planning time: tour {:.1}s, approach/path search {:.1}s, seal checks {:.1}s, support chains {:.1}s, cleanup {:.1}s, simulation {:.1}s", t.tour.as_secs_f64(), t.approach.as_secs_f64(), t.sealing.as_secs_f64(), t.chain.as_secs_f64(), t.cleanup.as_secs_f64(), t.simulate.as_secs_f64());
-    for (k, v) in &plan.header.stats {
+    for (k, v) in plan.header.stats.iter().filter(|(k, _)| k != "fallback_block") {
         println!("  {k}: {v}");
     }
     let mut hist: std::collections::BTreeMap<&str, usize> = Default::default();
@@ -59,7 +59,19 @@ pub fn slice_cmd(args: &[String]) {
     for (p, n) in plan.header.unreachable.iter().take(10) {
         println!("  unreachable: ({}, {}, {}) {n}", p.x, p.y, p.z);
     }
-    println!("{}", tr!("simulation: passed (every step legal, final world == schematic)", "시뮬레이션: 통과 (모든 단계 합법, 최종 월드 == 설계도)"));
+    match mc_bot::slice_stats::inexact_states(&plan) {
+        Ok(()) if plan.header.unreachable.is_empty() => println!("{}", tr!("simulation: passed (every step legal, final world == schematic)", "시뮬레이션: 통과 (모든 단계 합법, 최종 월드 == 설계도)")),
+        Ok(()) => println!("{}", tr!("simulation: every step legal; {} block(s) are NOT built (unreachable)", "시뮬레이션: 모든 단계 합법, 블록 {}개는 설치되지 않습니다(도달 불가)", plan.header.unreachable.len())),
+        Err(lines) => {
+            println!("{}", tr!("simulation: every step legal, but the final world differs from the schematic in {} block state(s):", "시뮬레이션: 모든 단계 합법, 단 블록 상태 {}개가 설계도와 다릅니다:", lines.len()));
+            for l in lines.iter().take(30) {
+                println!("  {l}");
+            }
+            if lines.len() > 30 {
+                println!("  ... +{}", lines.len() - 30);
+            }
+        }
+    }
 }
 
 /// `simulate <plan> <schematic>`

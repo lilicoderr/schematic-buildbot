@@ -133,6 +133,8 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     let (mut count, mut hash, mut since_cp, mut cp_n) = (0u32, 0u64, 0usize, 0u32);
     let mut unreachable: Vec<(BlockPos, String)> = Vec::new();
     let mut deviations = 0usize;
+    // blocks that will end up in another state than the schematic asks for: "x y z state props"
+    let mut fallbacks: Vec<String> = Vec::new();
     let mut stalled = 0usize;
 
     site.terrain.sky_top = positions.iter().map(|p| p.y).max().unwrap_or(origin.1) + 1;
@@ -269,6 +271,9 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             rec.steps.push(Step::Break(l.pos));
         }
         deviations += pl.unhonoured.len();
+        if !pl.unhonoured.is_empty() {
+            fallbacks.push(format!("{} {} {} {state} {}", world.x, world.y, world.z, pl.unhonoured.join(",")));
+        }
         if last_pass {
             site.finish(&mut rec).map_err(|e| e.to_string())?;
         }
@@ -327,6 +332,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     crate::slice_stats::fill(&mut plan, schem.blocks.len(), deviations);
     plan.header.stats.push(("state_neighbour_derived".into(), crate::slice_stats::neighbour_derived(schem).to_string()));
     crate::slice_stats::fill_mismatches(&mut plan);
+    plan.header.stats.extend(fallbacks.into_iter().map(|f| ("fallback_block".to_string(), f)));
     let t_sim = std::time::Instant::now();
     let sim_result = sim::simulate(&plan, schem);
     add(|_| {}, t_sim, |t| &mut t.simulate);

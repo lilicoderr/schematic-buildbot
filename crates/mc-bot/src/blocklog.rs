@@ -30,6 +30,11 @@ impl BlockLog {
         self.last.values().filter(|&&s| s != AIR_STATE).count()
     }
 
+    /// The state id the server last reported for `pos`.
+    pub fn state(&self, pos: BlockPos) -> Option<i32> {
+        self.last.get(&pos).copied()
+    }
+
     /// Forget a position (used before a retry so an old answer cannot satisfy it).
     pub fn forget(&mut self, pos: BlockPos) {
         self.last.remove(&pos);

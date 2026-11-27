@@ -28,6 +28,9 @@ pub struct Report {
     /// Times the server teleported the bot mid-run and it resynchronised.
     pub resyncs: usize,
     pub missing: Vec<BlockPos>,
+    /// Blocks whose server-reported state differs from the plan: (world position, wanted state,
+    /// difference). Only positions placed in this session are checked.
+    pub differs: Vec<(BlockPos, String, String)>,
     pub elapsed: Duration,
     /// Placements per second in each window of 100 placements.
     pub windows: Vec<f64>,
@@ -61,6 +64,20 @@ fn to_placement(state: &str, clicks: &[crate::plan::ClickStep], yaw: Option<f32>
         missing_support: None,
         unhonoured: Vec::new(),
     }
+}
+
+/// Final server-reported states against the plan, in a stable order.
+fn state_diffs(bot: &PlayClient, world: &World, sent: &Sent, off: Offset) -> Vec<(BlockPos, String, String)> {
+    let mut out: Vec<(BlockPos, String, String)> = world
+        .blocks
+        .iter()
+        .filter(|(c, _)| !world.scaffold.contains(*c))
+        .map(|(c, s)| (off.pos(BlockPos::new(c.0, c.1, c.2)), s))
+        .filter(|(p, _)| sent.contains_key(p))
+        .filter_map(|(p, s)| crate::verify::difference(s, bot.blocks.state(p)).map(|d| (p, s.clone(), d)))
+        .collect();
+    out.sort_by_key(|(p, ..)| (p.y, p.x, p.z));
+    out
 }
 
 pub fn run(
@@ -192,6 +209,7 @@ pub fn run(
         rep.repaired += exec_repair::repair(bot, &world, &sent, off, say)?;
     }
     rep.missing = exec_repair::missing(bot, &world, &sent, off);
+    rep.differs = state_diffs(bot, &world, &sent, off);
     rep.elapsed = started.elapsed();
     rep.kicked = bot.kicked.clone();
     Ok(rep)

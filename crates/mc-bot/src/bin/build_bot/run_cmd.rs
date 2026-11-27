@@ -84,6 +84,10 @@ fn report(plan: &Plan, r: &Report, teleports: u32) {
     for p in r.missing.iter().take(20) {
         println!("  missing: ({}, {}, {})", p.x, p.y, p.z);
     }
+    println!("{}", tr!("server-reported states: {} differ from the plan", "서버가 보고한 블록 상태: 계획과 다른 것 {}개", r.differs.len()));
+    for (p, want, how) in r.differs.iter().take(20) {
+        println!("  differs: ({}, {}, {}) {want}: {how}", p.x, p.y, p.z);
+    }
     if let Some(a) = &r.aborted {
         println!("aborted: {a}");
     }

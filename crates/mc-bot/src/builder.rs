@@ -459,8 +459,16 @@ impl PlayClient {
         self.pitch = pitch;
         self.set_creative_held(item)?;
         self.send_pos_look(true)?;
-        self.use_item_on(support, face, cursor)?;
-        self.idle(self.place_delay)
+        // Later steps click this block or stand on it, so the server must confirm it (one retry).
+        for _ in 0..2 {
+            self.blocks.forget(pos);
+            self.use_item_on(support, face, cursor)?;
+            self.idle(self.place_delay)?;
+            if self.wait_confirmed(pos, Duration::from_secs(2))? {
+                return Ok(());
+            }
+        }
+        Err(io::Error::other(format!("temporary support {pos:?} was refused; continuing could mean hovering")))
     }
 
     /// Fall straight down to feet height `y` (after the block under us was broken).

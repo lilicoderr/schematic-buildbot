@@ -37,5 +37,6 @@ pub mod support;
 pub mod text;
 pub mod tour;
 pub mod schematic;
+pub mod verify;
 pub mod version;
 pub mod world;

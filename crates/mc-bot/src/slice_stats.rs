@@ -25,6 +25,34 @@ pub fn neighbour_derived(schem: &crate::schematic::Schematic) -> usize {
         .count()
 }
 
+/// What the CLI may claim after slicing: `Ok` when every block ends in its wanted state,
+/// otherwise the lines describing the blocks that will not.
+pub fn inexact_states(plan: &Plan) -> Result<(), Vec<String>> {
+    let mut out: Vec<String> = plan
+        .header
+        .stats
+        .iter()
+        .filter(|(k, _)| k == "fallback_block")
+        .map(|(_, v)| format!("default state instead of the wanted one: {v}"))
+        .collect();
+    let order: Vec<Block> = plan
+        .steps
+        .iter()
+        .filter_map(|s| match s {
+            Step::Place { pos, state, .. } | Step::Auto { pos, state } => Some(Block::from_state(*pos, state)),
+            _ => None,
+        })
+        .collect();
+    out.extend(crate::predict::mismatches(&order, plan.header.origin.1).iter().map(|m| {
+        format!("set by its neighbours: {} {} {} {} {}: want {}, will be {}", m.pos.x, m.pos.y, m.pos.z, m.name, m.prop, m.wanted, m.predicted)
+    }));
+    if out.is_empty() {
+        Ok(())
+    } else {
+        Err(out)
+    }
+}
+
 /// Predict the final states from the plan's build order and record how many wanted
 /// neighbour-derived properties will differ, per `block.property`.
 pub fn fill_mismatches(plan: &mut Plan) {
