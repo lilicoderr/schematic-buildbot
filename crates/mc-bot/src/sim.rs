@@ -87,7 +87,7 @@ fn move_to(w: &mut World, to: Cell) -> Result<(), String> {
         if w.solid((from.0, from.1 + 2, from.2)) {
             return Err("no head room above the start cell to jump".into());
         }
-    } else if dy < 0 && dy >= -MAX_DROP {
+    } else if (-MAX_DROP..0).contains(&dy) {
         if (to.1..=from.1 + 1).any(|y| w.solid((to.0, y, to.2))) {
             return Err("drop column is not free".into());
         }
