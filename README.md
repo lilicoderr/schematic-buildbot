@@ -85,7 +85,7 @@ python tools/plan_preview/build.py small.bbplan -o preview.html   # open preview
 ```
 
 <p align="center"><img src="docs/plan-preview.gif" alt="animated plan preview of the small factory (not in-game)" width="800"></p>
-<p align="center"><sub><b>Plan preview, not in-game:</b> the small factory plan (5338 steps) replayed offline in the browser</sub></p>
+<p align="center"><sub><b>Plan preview, not in-game:</b> the small factory plan (5639 steps) replayed offline in the browser</sub></p>
 
 | Temporary blocks and bot path | Layer slider (layers 0 to 5) |
 |---|---|

@@ -79,7 +79,7 @@ python tools/plan_preview/build.py small.bbplan -o preview.html   # preview.html
 ```
 
 <p align="center"><img src="docs/plan-preview.gif" alt="소형 공장 계획 미리보기 애니메이션 (게임 화면 아님)" width="800"></p>
-<p align="center"><sub><b>계획 미리보기이며 게임 화면이 아닙니다:</b> 소형 공장 계획(5338단계)을 브라우저에서 오프라인 재생</sub></p>
+<p align="center"><sub><b>계획 미리보기이며 게임 화면이 아닙니다:</b> 소형 공장 계획(5639단계)을 브라우저에서 오프라인 재생</sub></p>
 
 | 임시 블록과 봇 경로 | 층 슬라이더 (0~5층) |
 |---|---|
