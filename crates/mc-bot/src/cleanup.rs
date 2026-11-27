@@ -9,12 +9,14 @@
 use super::{pos, Mover, Site};
 use crate::nav::{cell_feet, feet_cell, Cell};
 use crate::navplan::{Act, Query};
-use crate::world::{eye_to_box, CLICK_REACH};
+use crate::world::{eye_to_box, BlockPos, CLICK_REACH};
 use std::collections::{HashMap, HashSet};
 use std::io;
 
 /// Height of the band of scaffold worked at once.
 const BAND: i32 = 6;
+/// Rounds without any net removal before cleanup gives up.
+const RETRIES: u32 = 3;
 
 /// `c` can be broken by a player in `g` (never from above it).
 fn takes(g: Cell, c: Cell) -> bool {
@@ -27,11 +29,25 @@ impl Site {
         self.finish_while(bot, &mut |_| true)
     }
 
+    /// Take down, while building goes on, the scaffold below height `below`: construction has
+    /// moved past it, and a room may soon be closed over it. What does not come away easily
+    /// stays for [`Site::finish`].
+    pub fn tidy(&mut self, bot: &mut impl Mover, below: i32) -> io::Result<()> {
+        if self.scaffold.iter().any(|c| c.1 < below) {
+            self.spent = Some(HashSet::new());
+            self.removed.clear();
+            let result = self.clean(bot, below, &mut |_| true);
+            self.spent = None;
+            result?;
+        }
+        Ok(())
+    }
+
     /// [`Site::finish`] that stops as soon as `keep_going(blocks left)` says so.
     pub fn finish_while(&mut self, bot: &mut impl Mover, keep_going: &mut dyn FnMut(usize) -> bool) -> io::Result<usize> {
         self.spent = Some(HashSet::new());
         self.removed.clear();
-        let mut result = self.clean(bot, keep_going);
+        let mut result = self.clean(bot, i32::MAX, keep_going);
         // Rebuilding was barred where it happened twice; while that still helps, lift the bar
         // for what is left.
         let mut before = usize::MAX;
@@ -42,7 +58,7 @@ impl Site {
             before = left;
             self.spent = Some(HashSet::new());
             self.removed.clear();
-            result = self.clean(bot, keep_going);
+            result = self.clean(bot, i32::MAX, keep_going);
         }
         self.spent = None;
         result
@@ -80,12 +96,33 @@ impl Site {
         Ok(any)
     }
 
-    fn clean(&mut self, bot: &mut impl Mover, keep_going: &mut dyn FnMut(usize) -> bool) -> io::Result<usize> {
+    fn clean(&mut self, bot: &mut impl Mover, below: i32, keep_going: &mut dyn FnMut(usize) -> bool) -> io::Result<usize> {
         let mut later: HashSet<Cell> = HashSet::new();
+        // blocks no search could get near; looked at again only when nothing else is left
+        let mut far: HashSet<Cell> = HashSet::new();
+        let (mut at_last_retry, mut retries) = (usize::MAX, 0);
         while !bot.kicked() && keep_going(self.scaffold.len()) {
-            let Some(top) = self.scaffold.iter().filter(|c| !later.contains(c)).map(|c| c.1).max() else { break };
-            let mut band: Vec<Cell> =
-                self.scaffold.iter().copied().filter(|c| c.1 >= top - BAND && !later.contains(c)).collect();
+            let open = |c: &&Cell| c.1 < below && !later.contains(c) && !far.contains(c);
+            let Some(top) = self.scaffold.iter().filter(open).map(|c| c.1).max() else {
+                retries = if self.scaffold.len() < at_last_retry { 0 } else { retries + 1 };
+                if below != i32::MAX || self.scaffold.is_empty() || retries >= RETRIES {
+                    break;
+                }
+                at_last_retry = self.scaffold.len();
+                // what is left may be what holds the bot up: go down, then come back for it
+                let here = feet_cell(bot.feet());
+                let ground = self.terrain.ground_y;
+                if here.1 > ground {
+                    let down = BlockPos::new(here.0, ground, here.2);
+                    if let Some(acts) = self.search_far(here, down, &|g| g.1 <= ground) {
+                        self.perform(bot, &acts)?;
+                    }
+                }
+                far.clear();
+                later.clear();
+                continue;
+            };
+            let mut band: Vec<Cell> = self.scaffold.iter().filter(open).copied().filter(|c| c.1 >= top - BAND).collect();
             band.sort_unstable_by_key(|&c| (-c.1, c));
             if self.take_here(bot, &band, &mut later)? {
                 later.clear();
@@ -106,14 +143,19 @@ impl Site {
                 })
             };
             let here = feet_cell(bot.feet());
-            match self.nearest(here, &goal) {
+            // a long way off, the cheapest-first search runs out: then head for the top block
+            let found = self.nearest(here, &goal).or_else(|| match below {
+                i32::MAX => self.search_far(here, pos(band[0]), &goal),
+                _ => None,
+            });
+            match found {
                 Some(acts) if !acts.is_empty() => {
                     self.perform(bot, &acts)?;
                     if feet_cell(bot.feet()) == here {
                         later.extend(band);
                     }
                 }
-                _ => later.extend(band),
+                _ => far.extend(band),
             }
         }
         if !self.scaffold.is_empty() && std::env::var("BUILDBOT_DEBUG").is_ok() {

@@ -21,6 +21,8 @@ use std::io;
 
 /// Upcoming blocks considered when choosing where to stand (offline, so generous).
 pub const LOOKAHEAD: usize = 96;
+/// On reaching a new layer, scaffold this far below it is taken down again.
+const TIDY_BELOW: i32 = 3;
 /// A checkpoint is written after this many placements.
 pub const CHECKPOINT_EVERY: usize = 250;
 /// A pocket smaller than this many standing cells (no way to the open ground) counts as sealed.
@@ -143,6 +145,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     loop {
     let mut deferred: Vec<usize> = Vec::new();
     let mut queue = crate::batch::Queue::new(todo.iter().copied());
+    let mut layer = i32::MIN;
     loop {
         // place everything in reach before walking on; a block is "ready" when it has something to
         // rest on and its wanted state can be produced right now
@@ -157,6 +160,12 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
         let b = order[i];
         let world = positions[i];
         let state = b.state_string();
+        if !last_pass && world.y > layer {
+            layer = world.y;
+            let t_tidy = std::time::Instant::now();
+            site.tidy(&mut rec, layer - TIDY_BELOW).map_err(|e| e.to_string())?;
+            add(|_| {}, t_tidy, |t| &mut t.cleanup);
+        }
         if blocks::item_id(&b.name).is_none() {
             unreachable.push((world, format!("{}/unknown_block", b.name)));
             continue;
@@ -283,9 +292,6 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
         deviations += pl.unhonoured.len();
         if !pl.unhonoured.is_empty() {
             fallbacks.push(format!("{} {} {} {state} {}", world.x, world.y, world.z, pl.unhonoured.join(",")));
-        }
-        if last_pass {
-            site.finish(&mut rec).map_err(|e| e.to_string())?;
         }
         placed.insert(world);
         if b.name.ends_with("_slab") {

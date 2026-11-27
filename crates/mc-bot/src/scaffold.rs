@@ -20,6 +20,8 @@ mod cleanup;
 
 /// Node budget of one scaffold-navigation search.
 const SEARCH_NODES: usize = 60_000;
+/// Budget of the rare long-distance search for scaffold left far away.
+const FAR_NODES: usize = 600_000;
 
 /// What the planner needs from whatever moves the player: the live client, or a recorder that
 /// writes plan steps instead (see `slice`).
@@ -220,6 +222,15 @@ impl Site {
     fn search(&mut self, from: Cell, aim: BlockPos, goal: &dyn Fn(Cell) -> bool, keep_free: &[Cell]) -> Option<Vec<Act>> {
         let t = Instant::now();
         let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free, spent: self.spent.as_ref(), max_nodes: SEARCH_NODES };
+        let found = query.search(from, aim, goal);
+        self.timing.search += t.elapsed();
+        found
+    }
+
+    /// `search` with room for a long way (cleanup only, when everything near is done).
+    fn search_far(&mut self, from: Cell, aim: BlockPos, goal: &dyn Fn(Cell) -> bool) -> Option<Vec<Act>> {
+        let t = Instant::now();
+        let query = Query { terrain: &self.terrain, scaffold: &self.scaffold, keep_free: &[], spent: self.spent.as_ref(), max_nodes: FAR_NODES };
         let found = query.search(from, aim, goal);
         self.timing.search += t.elapsed();
         found
