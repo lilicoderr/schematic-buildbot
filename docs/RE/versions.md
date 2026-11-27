@@ -33,6 +33,8 @@ packet classes of the decompiled server. Releases in between (1.20.5/6, 1.21.2/3
 | accept_teleportation | id | id | id | id, x, y, z (doubles), yaw, pitch (floats) |
 | move_player_* last byte | on-ground bool | same | bit 0 on ground, bit 1 horizontal collision | same as 1.21.4 |
 | swing | hand VarInt | same | same | removed (`punch`, no body, is new; the server animates item use itself) |
+| player_command actions | press shift 0, release 1, start sprint 3, stop 4 | same | same | the shift actions are gone: start sprint 1, stop 2 |
+| sneaking | player_command | same | same | player_input flag byte, shift = 0x20 |
 | player_action actions | START = 0 | same | same | START = 0, two new actions (one inserted at 1) |
 
 The bot reads only the UUID and name of the login success packet, so the trailing fields do not matter, and it
@@ -51,7 +53,8 @@ always writes 0 or 1 as the movement byte, which is valid in both forms. The byt
   chunk_batch_received, set_carried_item, set_creative_mode_slot slot range (checked in 1.21.4 and 26.3),
   disconnect reasons as network NBT in play.
 
-The reach, placement, collision and movement notes in this folder were derived from 1.21.1 only. For other releases the
+The reach, placement, collision and movement notes in this folder, and the planner's block-state table
+(`state_table.rs`) and orientation rules, were derived from 1.21.1 only. For other releases the
 evidence is the live builds listed in the README, not a re-derivation.
 
 ## 4. Adding a release
