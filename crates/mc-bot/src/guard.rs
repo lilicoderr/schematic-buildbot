@@ -34,15 +34,17 @@ pub fn lower_priority() {
 /// Resident memory of this process in bytes, where it can be read.
 pub fn rss_bytes() -> Option<usize> {
     #[cfg(windows)]
-    // SAFETY: the struct matches PROCESS_MEMORY_COUNTERS and `cb` is its size.
-    unsafe {
+    {
         let mut c = sys::ProcessMemoryCounters { cb: 0, page_fault_count: 0, peak_working_set: 0, working_set: 0, rest: [0; 6] };
         c.cb = std::mem::size_of::<sys::ProcessMemoryCounters>() as u32;
-        let ok = sys::K32GetProcessMemoryInfo(sys::GetCurrentProcess(), &mut c, c.cb);
-        return (ok != 0).then_some(c.working_set);
+        // SAFETY: the struct matches PROCESS_MEMORY_COUNTERS and `cb` is its size.
+        let ok = unsafe { sys::K32GetProcessMemoryInfo(sys::GetCurrentProcess(), &mut c, c.cb) };
+        (ok != 0).then_some(c.working_set)
     }
     #[cfg(not(windows))]
-    None
+    {
+        None
+    }
 }
 
 pub struct Budget {
