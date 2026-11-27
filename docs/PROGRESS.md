@@ -48,3 +48,20 @@ Start: `java -Xmx3G -jar server.jar nogui` in that folder. Reset world: delete `
 `tools/viewer/capture.js` (mineflayer spectator + prismarine-viewer + playwright-core). Needs `npm install` in tools/viewer,
 env `RCON_PASSWORD`. Finding: prismarine-viewer 1.33 renders nothing for worlds with negative Y (no minY support), hence the tall flat world.
 Untested on the tall world yet. No images were produced or faked.
+
+
+## Update (after the RE docs)
+
+Done since: real reach rule (eye to block box; click support <= 5.0, target box <= 4.5), usable blocks never clicked,
+client_information + chunk batch replies, NBT disconnect reasons, teleport relative bits, `run` command with checkpoint repair,
+determinism and fuzz tests, bridges and escape pillars, pillar height capped at 4 so every scaffold block stays breakable.
+
+Live results (vanilla 1.21.1, tall flat world, small factory 2408 blocks, plan from `slice`, `run --verify`):
+* old client, old plan: 2408/2408 confirmed, 950 s (2.5 blocks/s), 0 kicks, 0 re-placed.
+* fixed client, new plan: 2408/2408 confirmed, 748 s (3.2 blocks/s), 0 kicks, 0 re-placed. Throughput per 100 placements:
+  9.6 12.4 7.7 10.7 7.7 7.2 3.2 2.8 3.5 3.3 8.1 4.1 2.5 1.3 1.4 1.6 2.2 3.3 3.1 2.4 3.0 2.3 5.1 5.8 (not steady: the middle layers need
+  many bridges/pillars).
+* Only block counts are checked against the server; exact block-state ids are not compared.
+
+Large factory (22k): `slice` takes 12+ minutes (BFS fallback radius 160) and has not produced a clean plan yet; see the last
+commit for the state. Not run live. Screenshots not done (prismarine-viewer cannot render negative Y; tall flat world configured).
