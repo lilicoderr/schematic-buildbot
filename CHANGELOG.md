@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Minecraft 1.20.4, 1.21.4 and 26.3 besides 1.21 / 1.21.1: packet ids, items and block states are generated from each
+  server's data reports (`tools/re/gen_tables.py`); differing packet layouts are selected per version.
+- `tools/re/fetch.ps1` verifies SHA-1 and handles releases without mappings (26.x).
 - Block-state support: stairs `facing`/`half`, slabs `type` (incl. double), log/pillar `axis`,
   and `facing` for doors, fence gates, beds, furnaces, chests and similar (`placement.rs`).
   States are read from `.schem`, `.litematic` (palette `Properties`) and the text format (`oak_stairs[facing=east]`).

@@ -1,10 +1,11 @@
 //! Protocol flow: handshake, status ping, (offline) login and configuration → play.
 
-use crate::ids;
+use crate::codec;
 use crate::net::Connection;
 use crate::tr;
+use crate::version;
 use mc_proto::buf::PacketBuf;
-use mc_proto::{State, PROTOCOL_VERSION};
+use mc_proto::State;
 use std::io;
 
 /// Send the handshake. `next_state`: 1 = Status, 2 = Login.
@@ -14,18 +15,19 @@ pub fn handshake(conn: &mut Connection, host: &str, port: u16, protocol: i32, ne
     b.write_string(host);
     b.write_u16(port);
     b.write_varint(next_state);
-    conn.send(ids::SB_HANDSHAKE, b.as_slice())
+    conn.send(version::active().packets().sb_handshake_intention, b.as_slice())
 }
 
 /// Server-list ping (status). Returns the JSON string.
 pub fn status_ping(addr: &str, host: &str, port: u16) -> io::Result<String> {
     let mut conn = Connection::connect(addr)?;
-    handshake(&mut conn, host, port, PROTOCOL_VERSION, 1)?;
+    let ver = version::active();
+    handshake(&mut conn, host, port, ver.protocol, 1)?;
     conn.state = State::Status;
-    conn.send(ids::SB_STATUS_REQUEST, &[])?;
+    conn.send(ver.packets().sb_status_status_request, &[])?;
     loop {
         let (id, mut body) = conn.recv()?;
-        if id == ids::CB_STATUS_RESPONSE {
+        if id == ver.packets().cb_status_status_response {
             return body
                 .read_string()
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
@@ -51,10 +53,11 @@ pub fn login_offline(
     username: &str,
     on_packet: impl FnMut(State, i32, &PacketBuf),
 ) -> io::Result<(Connection, JoinInfo)> {
-    login_offline_v(addr, host, port, username, PROTOCOL_VERSION, on_packet)
+    login_offline_v(addr, host, port, username, version::active().protocol, on_packet)
 }
 
-/// Like [`login_offline`] but announces an explicit protocol number in the handshake.
+/// Like [`login_offline`] for an explicit protocol number. It must be one of the supported
+/// releases, which becomes the active version (several names can share a protocol).
 pub fn login_offline_v(
     addr: &str,
     host: &str,
@@ -63,6 +66,14 @@ pub fn login_offline_v(
     protocol: i32,
     mut on_packet: impl FnMut(State, i32, &PacketBuf),
 ) -> io::Result<(Connection, JoinInfo)> {
+    if version::active().protocol != protocol {
+        let v = version::by_protocol(protocol).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Unsupported, tr!("unsupported protocol {}", "지원하지 않는 프로토콜 {}", protocol))
+        })?;
+        version::set_active(v);
+    }
+    let ver = version::active();
+    let p = ver.packets();
     let mut conn = Connection::connect(addr)?;
     handshake(&mut conn, host, port, protocol, 2)?;
     conn.state = State::Login;
@@ -72,7 +83,7 @@ pub fn login_offline_v(
     let mut ls = PacketBuf::new();
     ls.write_string(username);
     ls.write_uuid(offline_uuid);
-    conn.send(ids::SB_LOGIN_START, ls.as_slice())?;
+    conn.send(p.sb_login_hello, ls.as_slice())?;
 
     let mut join = JoinInfo { uuid: offline_uuid, username: username.to_string(), entity_id: 0 };
 
@@ -81,26 +92,27 @@ pub fn login_offline_v(
         let (id, mut body) = conn.recv()?;
         on_packet(State::Login, id, &body);
         match id {
-            ids::CB_LOGIN_SET_COMPRESSION => {
+            x if x == p.cb_login_login_compression => {
                 let threshold = body.read_varint().unwrap_or(-1);
                 conn.set_threshold(if threshold < 0 { None } else { Some(threshold as usize) });
             }
-            ids::CB_LOGIN_SUCCESS => {
+            x if x == p.cb_login_login_finished => {
                 join.uuid = body.read_uuid().unwrap_or(offline_uuid);
                 join.username = body.read_string().unwrap_or_else(|_| username.to_string());
                 // Properties after this are ignored
-                conn.send(ids::SB_LOGIN_ACK, &[])?; // Login Acknowledged → Configuration
+                conn.send(p.sb_login_login_acknowledged, &[])?; // → Configuration
                 conn.state = State::Configuration;
-                conn.send(ids::SB_CONFIG_CLIENT_INFO, client_information(VIEW_DISTANCE).as_slice())?;
+                let info = codec::client_information(ver.layout, VIEW_DISTANCE);
+                conn.send(p.sb_config_client_information, info.as_slice())?;
                 break;
             }
-            ids::CB_LOGIN_ENCRYPTION_REQUEST => {
+            x if x == p.cb_login_hello => {
                 return Err(io::Error::other(tr!(
                     "the server requires encryption (online mode); use an online-mode=false server",
                     "서버가 암호화(온라인 모드)를 요구합니다. 테스트는 online-mode=false 서버로 하세요."
                 )));
             }
-            ids::CB_LOGIN_DISCONNECT => {
+            x if x == p.cb_login_login_disconnect => {
                 let reason = body.read_string().unwrap_or_default();
                 return Err(io::Error::new(io::ErrorKind::ConnectionRefused, tr!("login refused: {}", "로그인 거부: {}", reason)));
             }
@@ -113,30 +125,30 @@ pub fn login_offline_v(
         let (id, mut body) = conn.recv()?;
         on_packet(State::Configuration, id, &body);
         match id {
-            ids::CB_CONFIG_KEEPALIVE => {
+            x if x == p.cb_config_keep_alive => {
                 let k = body.read_i64().unwrap_or(0);
                 let mut r = PacketBuf::new();
                 r.write_i64(k);
-                conn.send(ids::SB_CONFIG_KEEPALIVE, r.as_slice())?;
+                conn.send(p.sb_config_keep_alive, r.as_slice())?;
             }
-            ids::CB_CONFIG_PING => {
-                let p = body.read_i32().unwrap_or(0);
+            x if x == p.cb_config_ping => {
+                let ping = body.read_i32().unwrap_or(0);
                 let mut r = PacketBuf::new();
-                r.write_i32(p);
-                conn.send(ids::SB_CONFIG_PONG, r.as_slice())?;
+                r.write_i32(ping);
+                conn.send(p.sb_config_pong, r.as_slice())?;
             }
-            ids::CB_CONFIG_KNOWN_PACKS => {
+            x if x == p.cb_config_select_known_packs => {
                 // Reply with an empty known-packs list (accepted by vanilla servers)
                 let mut r = PacketBuf::new();
                 r.write_varint(0);
-                conn.send(ids::SB_CONFIG_KNOWN_PACKS, r.as_slice())?;
+                conn.send(p.sb_config_select_known_packs, r.as_slice())?;
             }
-            ids::CB_CONFIG_FINISH => {
-                conn.send(ids::SB_CONFIG_FINISH_ACK, &[])?;
+            x if x == p.cb_config_finish_configuration => {
+                conn.send(p.sb_config_finish_configuration, &[])?;
                 conn.state = State::Play;
                 break;
             }
-            ids::CB_CONFIG_DISCONNECT => {
+            x if x == p.cb_config_disconnect => {
                 let reason = crate::text::disconnect_reason(&mut body);
                 return Err(io::Error::new(io::ErrorKind::ConnectionRefused, tr!("configuration refused: {}", "설정 단계 거부: {}", reason)));
             }
@@ -150,22 +162,7 @@ pub fn login_offline_v(
 /// View distance the bot announces (chunks); the server clamps it to its own limit.
 pub const VIEW_DISTANCE: u8 = 8;
 
-/// Serverbound client_information (configuration, id 0): without it the server assumes view
-/// distance 2 and en_us (docs/RE/protocol.md). Field order from the packet codec.
-pub fn client_information(view_distance: u8) -> PacketBuf {
-    let mut b = PacketBuf::new();
-    b.write_string("en_us");
-    b.write_u8(view_distance);
-    b.write_varint(0); // chat visibility: full
-    b.write_bool(true); // chat colors
-    b.write_u8(0x7f); // all skin parts
-    b.write_varint(1); // main hand: right
-    b.write_bool(false); // text filtering
-    b.write_bool(true); // allows listing
-    b
-}
-
-/// Serverbound chunk_batch_received (play id 8): the server sends the next chunk batch only after
+/// Serverbound chunk_batch_received: the server sends the next chunk batch only after
 /// this answer to every chunk_batch_finished.
 pub fn chunk_batch_received(chunks_per_tick: f32) -> PacketBuf {
     let mut b = PacketBuf::new();
@@ -249,12 +246,6 @@ fn md5(input: &[u8]) -> [u8; 16] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn client_information_layout_matches_the_codec() {
-        // "en_us", view distance 8, chat visibility 0, colors on, all skin parts, right hand, no filtering, listing on
-        assert_eq!(client_information(8).as_slice(), [5, b'e', b'n', b'_', b'u', b's', 8, 0, 1, 0x7f, 1, 0, 1]);
-    }
-
     #[test]
     fn chunk_batch_ack_is_one_float() {
         assert_eq!(chunk_batch_received(9.0).as_slice(), 9.0f32.to_be_bytes());

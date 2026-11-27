@@ -4,6 +4,8 @@ pub mod batch;
 pub mod blocklog;
 pub mod blocks;
 pub mod builder;
+pub mod codec;
+pub mod data;
 pub mod derive;
 pub mod exec;
 pub mod exec_repair;

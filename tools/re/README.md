@@ -3,16 +3,18 @@
 Scripts only. Jars, mappings and decompiled sources live in a cache outside the repo
 (`%LOCALAPPDATA%\mc-re-cache\<version>`) and are never committed; Mojang's code is not distributed.
 
-1. `fetch.ps1 -Version 1.21.1` downloads the official server jar and official Mojang mappings
-   (from `piston-meta.mojang.com`) into the cache.
-2. Extract the inner jar `META-INF/versions/<v>/server-<v>.jar` from the bundler jar.
-3. `python -I mojmap_to_tiny.py server_mappings.txt mojmap.tiny` converts the mappings to Tiny v2.
-4. Remap with tiny-remapper (`java -jar tiny-remapper-fat.jar in.jar out.jar mojmap.tiny official named`).
-5. Decompile with Vineflower (a Java decompiler is the right tool for a Java server; Ghidra is for
-   native binaries): `java -jar vineflower.jar out.jar decompiled/`.
-6. Data tables from the server's own generator:
-   `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --server --output reports/`
-   (blocks.json, registries.json, packets.json).
+1. `fetch.ps1 -Version 1.21.1` (or `latest`) downloads the official server jar, and the official Mojang mappings
+   where the release has them (26.x ships unobfuscated), into the cache; SHA-1 is checked against `piston-meta.mojang.com`.
+2. Data tables from the server's own generator, run in an empty directory:
+   `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --server --output out`
+   (blocks.json, registries.json, and in newer releases packets.json). The run also unpacks the inner server jar and
+   libraries into `versions/` and `libraries/`.
+3. Mapped releases: `python -I mojmap_to_tiny.py server_mappings.txt mojmap.tiny`, then
+   `java -jar tiny-remapper-fat.jar inner.jar named.jar mojmap.tiny official named <library jars>`.
+4. Decompile only what is needed with Vineflower (a Java decompiler is the right tool for a Java server):
+   `java -jar vineflower.jar --only=net/minecraft/network --only=net/minecraft/server/network named.jar decompiled/`
+   (add a `--only=` per extra class, e.g. `net/minecraft/world/phys/BlockHitResult`).
+5. `gen_tables.py` turns the reports into `crates/mc-bot/src/data/v<protocol>.rs` (usage at the top of the script).
+   Only these numeric tables with their registry names are committed.
 
-Steps 2 to 6 run third-party or downloaded jars, so they are run by the maintainer, not by the agent
-session (the session's permission policy refused to execute them).
+[docs/RE/versions.md](../../docs/RE/versions.md) lists what to compare when adding a release.

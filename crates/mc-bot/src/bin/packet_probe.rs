@@ -1,4 +1,4 @@
-//! packet-probe: connects to a 1.21.1 server and observes the protocol (reverse engineering).
+//! packet-probe: connects to a server (`BUILDBOT_VERSION`, default 1.21.1) and observes the protocol (reverse engineering).
 //!
 //!   packet-probe status [host:port]               server-list ping (JSON)
 //!   packet-probe probe  [host:port] [name] [secs] log in, then collect and classify Play packets
@@ -6,8 +6,8 @@
 //! probe mode answers keepalives/teleports correctly, so it samples the packet flow without being kicked.
 //! online-mode=false servers only.
 
-use mc_bot::ids;
-use mc_bot::proto;
+use mc_bot::world::Vec3;
+use mc_bot::{codec, proto, version};
 use mc_bot::{i18n, tr};
 use mc_proto::buf::PacketBuf;
 use mc_proto::State;
@@ -22,6 +22,15 @@ fn main() {
     let target = args.get(2).map(String::as_str).unwrap_or("127.0.0.1:25566");
     let (host, port) = split_addr(target);
 
+    if let Ok(name) = std::env::var("BUILDBOT_VERSION") {
+        match version::lookup(&name) {
+            Ok(v) => version::set_active(v),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
+    }
     let result = match mode {
         "status" => run_status(target, &host, port),
         "probe" => {
@@ -114,29 +123,27 @@ fn run_probe(addr: &str, host: &str, port: u16, name: &str, secs: u64) -> io::Re
                 let n = mc_bot::ids::name(State::Play, true, id);
                 stats.record(&format!("Play/{} (0x{:02X})", n, id), len);
 
+                let p = version::active().packets();
                 match id {
-                    ids::CB_PLAY_KEEPALIVE => {
+                    x if x == p.cb_play_keep_alive => {
                         let k = body.read_i64().unwrap_or(0);
                         let mut r = PacketBuf::new();
                         r.write_i64(k);
-                        conn.send(ids::SB_PLAY_KEEPALIVE, r.as_slice())?;
+                        conn.send(p.sb_play_keep_alive, r.as_slice())?;
                         kept_alive += 1;
                     }
-                    ids::CB_PLAY_SYNC_POS => {
-                        let x = body.read_f64().unwrap_or(0.0);
-                        let y = body.read_f64().unwrap_or(0.0);
-                        let z = body.read_f64().unwrap_or(0.0);
-                        let _yaw = body.read_f32().unwrap_or(0.0);
-                        let _pitch = body.read_f32().unwrap_or(0.0);
-                        let _flags = body.read_u8().unwrap_or(0);
-                        let tp_id = body.read_varint().unwrap_or(0);
-                        pos = (x, y, z);
-                        let mut r = PacketBuf::new();
-                        r.write_varint(tp_id);
-                        conn.send(ids::SB_PLAY_CONFIRM_TELEPORT, r.as_slice())?;
-                        teleports += 1;
+                    x if x == p.cb_play_player_position => {
+                        let layout = version::active().layout;
+                        if let Some(t) = codec::read_teleport(layout, &mut body) {
+                            pos = t.pos;
+                            // spawn teleports are absolute, so the raw values are the position
+                            let at = (Vec3::new(t.pos.0, t.pos.1, t.pos.2), t.yaw, t.pitch);
+                            let confirm = codec::accept_teleport(layout, t.id, at);
+                            conn.send(p.sb_play_accept_teleportation, confirm.as_slice())?;
+                            teleports += 1;
+                        }
                     }
-                    ids::CB_PLAY_DISCONNECT => {
+                    x if x == p.cb_play_disconnect => {
                         println!("{}", tr!("  [server closed the connection]", "  [서버가 연결 종료]"));
                         break;
                     }

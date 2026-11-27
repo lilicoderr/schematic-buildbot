@@ -24,5 +24,5 @@ For live checks run a local vanilla 1.21.1 server with `online-mode=false` and `
 ## Ideas
 
 - More block-state families: trapdoors, buttons/levers, 6-way blocks (dispensers, pistons), hinges.
-- A verified packet-id table for another Minecraft version (add it in `version.rs` + `ids`, keep `supported: false` until tested).
+- Another Minecraft version: follow "Adding a release" in [docs/RE/versions.md](docs/RE/versions.md).
 - Survival mode with materials from chests.

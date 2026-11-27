@@ -35,6 +35,7 @@ pub fn slice_cmd(args: &[String]) {
     let origin = flag(args, "--origin").map(|s| parse_origin(&s).unwrap_or_else(|| fail("--origin needs x,y,z".into()))).unwrap_or((2, 64, 2));
     let version = mc_bot::version::lookup(&flag(args, "--version").unwrap_or_else(|| mc_bot::version::DEFAULT.name.to_string()))
         .unwrap_or_else(|e| fail(e.to_string()));
+    mc_bot::version::set_active(version);
     let schem = load(src);
     let t = Instant::now();
     mc_bot::guard::lower_priority();

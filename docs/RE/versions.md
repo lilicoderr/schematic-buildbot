@@ -1,44 +1,71 @@
-# Versions: what is cached and how to diff more
+# Versions: measured differences and how to add one
 
-## 1. Cached versions
+Compared: 1.20.4 (765), 1.21.1 (767, the baseline of the other docs here), 1.21.4 (769) and 26.3 (777, the latest
+release when this was written). Sources: each official server jar's `version.json`, its data generator reports, and the
+packet classes of the decompiled server. Releases in between (1.20.5/6, 1.21.2/3, 1.21.5 to 1.21.11, 26.1, 26.2) were
+**not** compared: which of them introduced a change below is unknown, and the bot rejects them.
 
-Only 1.21.1 exists under `%LOCALAPPDATA%\mc-re-cache` (server.jar, server_mappings.txt, version.json, plus work/ with the remapped and decompiled server and reports/).
-Facts from the bundled version.json: protocol_version 767, world_version 3955, data pack 48, resource pack 34, Java 21.
-1.21 (also protocol 767) shares the packet table; the bot's version.rs already lists it as supported.
+## 1. Tables
 
-Baseline numbers for later diffs (1.21.1):
-- Block states: 26684 (ids 0..26683); air 0, stone 1, cobblestone 14, water 80..95, lava 96..111, ladder 4654..4661, snow 5772..5779, soul_sand 5850, honey_block 19445, oak_stairs 2874..2953.
-- Items: 1333 registry entries (matches the bot's table exactly).
-- Packets: configuration C 17 (0..16), S 8; play C 124 (ids 0..123), S 58 (ids 0..57). Full table in protocol.md.
+| | 1.20.4 | 1.21.1 | 1.21.4 | 26.3 |
+|---|---|---|---|---|
+| items | 1312 | 1333 | 1385 | 1658 |
+| blocks / block states | 1058 / 26644 | 1060 / 26684 | 1095 / 27866 | 1286 / 35723 |
+| configuration packets to client / to server | 10 / 7 | 17 / 8 | 17 / 8 | 21 / 10 |
+| play packets to client / to server | 116 / 55 | 124 / 58 | 131 / 62 | 144 / 69 |
+| Java used for the server | 21 (needs 17) | 21 | 21 | 25 |
 
-## 2. Generating another version
+- Nearly every packet id and most item ids shift between releases, so each protocol has its own generated table
+  (`crates/mc-bot/src/data/v<protocol>.rs`). Air is block state 0 in all four.
+- Block names are not stable: 26.3 has no `chain` block or item, so a schematic that uses it is reported as
+  unregistered there. Blocks missing in older releases (for example `vault` and `heavy_core` in 1.20.4) are too.
 
-All with tools/re (scripts only; jars and outputs stay outside the repo):
+## 2. Layout differences in packets the bot uses
 
-1. `pwsh tools/re/fetch.ps1 -Version <id>` downloads server.jar, server_mappings.txt and version.json into `%LOCALAPPDATA%\mc-re-cache\<id>`.
-2. Extract the inner jar `META-INF/versions/<id>/server-<id>.jar` from the bundler jar.
-3. `python -I tools/re/mojmap_to_tiny.py server_mappings.txt mojmap.tiny`.
-4. Remap with tiny-remapper (`official` -> `named`), then decompile with Vineflower.
-5. Reports: `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --server --output reports/` (blocks.json, items.json, registries.json, packets.json, commands.json).
-6. Diff: compare packets.json per state/direction by name (ids shift), blocks.json by per-state id and property lists, registries.json `minecraft:item` by name -> protocol_id.
-   Also read version.json protocol_version and set `PROTOCOL_VERSION` / the bot's version table accordingly.
+| packet | 1.20.4 | 1.21.1 | 1.21.4 | 26.3 |
+|---|---|---|---|---|
+| client_information | 8 fields | same | + particle status VarInt | same as 1.21.4 |
+| select_known_packs (configuration) | does not exist | exists | same | same |
+| login success packet name | game_profile | game_profile | login_finished | login_finished, ends with a session UUID |
+| item stack (set_creative_mode_slot) | bool present, id, count byte, NBT | count, id, added, removed | same | same bytes for a plain item (component values would be length-prefixed) |
+| use_item_on hit result | ... inside bool | same | + world-border-hit bool | same as 1.21.4 |
+| player_position | pos, yaw, pitch, flags byte, id | same | id, pos, velocity (3 doubles), yaw, pitch, flags int (9 bits) | same as 1.21.4 |
+| accept_teleportation | id | id | id | id, x, y, z (doubles), yaw, pitch (floats) |
+| move_player_* last byte | on-ground bool | same | bit 0 on ground, bit 1 horizontal collision | same as 1.21.4 |
+| swing | hand VarInt | same | same | removed (`punch`, no body, is new; the server animates item use itself) |
+| player_action actions | START = 0 | same | same | START = 0, two new actions (one inserted at 1) |
 
-Note: mojmap names are stable across versions, so class names such as ServerGamePacketListenerImpl can be diffed directly after decompiling.
+The bot reads only the UUID and name of the login success packet, so the trailing fields do not matter, and it
+always writes 0 or 1 as the movement byte, which is valid in both forms. The bytes of every row are covered by
+`codec_tests.rs` (use_item_on: length and trailing bytes).
 
-## 3. What usually changes between releases (from memory, to verify with a real diff)
+## 3. Server behaviour that changed
 
-- Play packet ids shift whenever a packet is added or removed (1.21.2 and 1.21.4 reshuffled clientbound play; 1.21.2 added/renamed several movement-related packets).
-- Block state ids shift whenever a block or a property is added (e.g. new wood sets, pale garden blocks, copper variants, creaking heart); item ids shift too.
-- Serialization details changed around 1.21.2 to 1.21.5: teleport packet (adds delta movement), move-player packets (extra flags bit for horizontal collision), BlockHitResult (extra worldBorderHit flag),
-  player input (bit flags incl. sprint), a `player_loaded` packet, login packet field order, item component encoding (hashed components in later versions), chat checksum byte in chat packets (1.21.5), registry data entries.
-- Protocol numbers (wiki, unverified here): 1.21/1.21.1 = 767, 1.21.2/1.21.3 = 768, 1.21.4 = 769, 1.21.5 = 770.
+- **Client load gate (1.21.4, 26.3).** The play listener ignores movement and use_item_on until `hasClientLoaded()`:
+  the client sends `player_loaded`, or a 60 tick timer runs out. The bot sends it after the first teleport.
+- **One position per client tick (26.3).** A second movement packet with a position, before `client_tick_end`, disconnects
+  with "invalid player movement". The bot sends `client_tick_end` after every movement packet on releases that have it
+  (the 1.21.4 handler only updates the known movement; 1.21.4 does not have the disconnect).
+- **Teleport confirmation (26.3).** The server applies the position and rotation inside accept_teleportation.
+- **Unchanged** in all four: block update, section blocks update (VarLong entries), set_health, keep-alive, ping,
+  chunk_batch_received, set_carried_item, set_creative_mode_slot slot range (checked in 1.21.4 and 26.3),
+  disconnect reasons as network NBT in play.
 
-Treat each item as a hypothesis until packets.json and the codec classes of the target version confirm it. The bot's id table is only valid for 767.
+The reach, placement, collision and movement notes in this folder were derived from 1.21.1 only. For other releases the
+evidence is the live builds listed in the README, not a re-derivation.
 
-## 4. What the planner/simulator must assume
+## 4. Adding a release
 
-- Everything in this folder is 1.21.1-specific. A version bump requires re-verifying: ids (ids.rs), state ids (anything using numeric states), item ids, teleport/move/use-item layouts, and the movement thresholds in movement.md.
+Everything runs from `tools/re`; jars, mappings and decompiled sources stay in `%LOCALAPPDATA%\mc-re-cache`.
 
-## 5. Open questions
-
-- No second version was available to diff; the items above are not measured.
+1. `fetch.ps1 -Version <id>` (or `latest`) downloads the server jar, checks its SHA-1 against piston-meta, and the
+   mappings where the release has them. 26.3 ships unobfuscated: no mappings, no remap step.
+2. Data generator, run in an empty directory:
+   `java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --server --output out`.
+   Read `protocol_version` from the jar's `version.json`.
+3. Decompile the packet classes (see [tools/re/README.md](../../tools/re/README.md)). 1.20.4 writes no `packets.json`;
+   its ids come from the registration order in `ConnectionProtocol`.
+4. `gen_tables.py` writes `data/v<protocol>.rs`. Register it in `data/mod.rs` and `version.rs`.
+5. Diff the classes of every packet in section 2 and the matching handlers in `ServerGamePacketListenerImpl`; add a
+   `Layout` field and a byte test for each difference. Do not copy a neighbouring release's layout without checking.
+6. Only mark `live_verified` after building on a real server and checking the blocks with `tools/verify_states.py`.

@@ -4,13 +4,13 @@
 
 <p align="center">
   <b>Minecraft 설계도(<code>.schem</code>)를 URL 한 줄로 받아 서버에 대신 지어주는 Rust 봇</b><br>
-  프로토콜(1.21.1 / 767)을 라이브러리 없이 손으로 구현 · 공중부양/과속 없이 걸어 다니며 건축 · 킥 없음
+  프로토콜(1.20.4, 1.21.1, 1.21.4, 26.3)을 라이브러리 없이 손으로 구현 · 공중부양/과속 없이 걸어 다니며 건축 · 킥 없음
 </p>
 
 <p align="center">
   <a href="https://github.com/lilicoderr/schematic-buildbot/actions/workflows/ci.yml"><img src="https://github.com/lilicoderr/schematic-buildbot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/rust-stable-orange?logo=rust" alt="Rust">
-  <img src="https://img.shields.io/badge/minecraft-1.21.1-62B47A" alt="Minecraft 1.21.1">
+  <img src="https://img.shields.io/badge/minecraft-1.20.4_%7C_1.21.x_%7C_26.3-62B47A" alt="Minecraft 1.20.4, 1.21, 1.21.1, 1.21.4, 26.3">
   <img src="https://img.shields.io/badge/blocks-1333-blue" alt="1333 blocks">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
 </p>
@@ -122,8 +122,27 @@ python gif.py frames shots/plan-preview.gif              # Pillow 필요
 | `--resume` 이어 짓기 · `--rate` 초당 설치 상한 | ✅ |
 | `--lang en\|ko` 출력 언어 | ✅ |
 | `.litematic` (Litematica, 다중 리전 · 비트 패킹 팔레트) | ✅ |
-| 다른 버전 서버 | 🚧 버전 표(`--version`)만 준비됨 — 검증된 ID 표는 1.21/1.21.1 뿐. 그 외는 [ViaProxy](https://github.com/ViaVersion/ViaProxy) 경유 |
+| 여러 마인크래프트 버전 (`--version`) | ✅ [지원 버전](#지원-버전) 참고. 그 외 버전은 [ViaProxy](https://github.com/ViaVersion/ViaProxy) 경유 |
 | 생존 모드 + 상자에서 자재 꺼내기 | 🚧 필요한 패킷 ID 는 매핑됨 |
+
+## 지원 버전
+
+`--version` 으로 고릅니다(기본 1.21.1). 계획 파이프라인에서는 `slice` 에 지정하면 계획 파일에 프로토콜이 기록됩니다.
+아래 버전은 모두 자동 생성한 ID 표가 있고, 버전마다 다른 패킷 구조는 바이트 단위의 단위 테스트가 있습니다.
+마지막 열은 해당 버전의 로컬 바닐라 서버(크리에이티브, 오프라인)에서 실제로 돌린 결과입니다.
+
+| 버전 | 프로토콜 | 표 + 단위 테스트 | 실서버 |
+|---|---|---|---|
+| 1.20.4 | 765 | ✅ | ✅ 짧은 건축 |
+| 1.21 | 767 | ✅ (1.21.1과 공용) | 따로 실행 안 함 |
+| 1.21.1 | 767 | ✅ | ✅ 짧은 건축, 2408블록 공장(이전 측정) |
+| 1.21.4 | 769 | ✅ | ✅ 짧은 건축 |
+| 26.3 | 777 | ✅ | ✅ 짧은 건축 |
+
+"짧은 건축"(2026-11): `cottage.txt` 25/25, 높이 9의 벽 45/45(비계 기둥을 쌓고 다시 제거)는 RCON으로 블록 상태까지 일치.
+계획 파이프라인의 `state-lab.txt` 는 26/27 일치(`oak_log[axis=x]` 하나는 1.21.1을 포함해 실행한 모든 버전에서 다름).
+직접 건축 모드의 `stair-tower.txt` 는 서버 블록 업데이트로 51/51 확인. 킥 없음. 생존·온라인 모드, Paper/Spigot, 표에 없는 버전은
+미검증입니다. 버전별 차이는 [docs/RE/versions.md](docs/RE/versions.md) 참고.
 
 ## 빌드 · 실행
 
@@ -175,7 +194,8 @@ flowchart LR
 crates/mc-proto/      VarInt/VarLong, 문자열, Position, UUID, 길이 프레이밍 + zlib (의존성: flate2)
 crates/mc-bot/
   net.rs  proto.rs    TCP · 핸드셰이크/상태핑/오프라인 로그인/Config
-  ids.rs              1.21.1 패킷 ID (minecraft-data 대조)
+  data/               버전별 패킷·아이템·블록 표 (tools/re/gen_tables.py 로 생성)
+  version.rs · codec.rs  버전 선택, 버전마다 다른 패킷 구조
   world.rs            좌표 · 시야(yaw/pitch) · 도달 거리
   nbt.rs schem.rs     NBT 리더 · Sponge .schem 파서
   schematic.rs        설계도 모델 · 건축 순서 · ASCII 도면 · 공중 블록 검출
@@ -201,7 +221,7 @@ tools/preview.py      설계도 → 아이소메트릭 PNG
 - `cargo test --workspace` — 단위 테스트 (VarInt/Position/zlib/MD5 벡터, 설계도·`.schem` 파싱, ASCII 도면, 공중 블록, 도달 거리 …)
 - 실서버(로컬 바닐라 1.21.1, 크리에이티브, 오프라인)를 RCON(`execute if block … <상태>`)으로 블록별 확인, 모든 실행에서 킥 없음:
   `cottage.txt` 25/25, `stair-tower.txt` 51/51 (통블록 반블록·계단 방향·통나무 축 일치), `state-lab.txt` 26개 + 문 윗칸 자동 생성 (위쪽 계단·가로 통나무·화로·상자·문 일치), `--resume` 39/51에서 중단 후 이어 짓기 완료.
-- 아직 실서버 미검증: Paper/Spigot 등 다른 서버, 1.21.1 외 버전, 문 경첩·다락문·버튼 등. 실행 화면 스크린샷은 추후 추가(위 결과는 서버측 블록 조회 기준).
+- 아직 실서버 미검증: Paper/Spigot 등 다른 서버, [지원 버전](#지원-버전) 외 버전, 문 경첩·다락문·버튼 등. 실행 화면 스크린샷은 추후 추가(위 결과는 서버측 블록 조회 기준).
 
 ## 기여
 

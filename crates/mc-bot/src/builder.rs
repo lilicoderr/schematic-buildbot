@@ -8,13 +8,14 @@
 //!  · Only place when the eye-to-block distance is within reach, otherwise walk closer first.
 
 use crate::blocklog::{self, BlockLog};
-use crate::ids;
+use crate::codec::{self, PlayerAction};
 use crate::motion::{self, SPRINT_STEP, WALK_STEP};
 use crate::nav::{cell_feet, Cell};
 use crate::net::Connection;
 use crate::placement::Plan;
 use crate::proto::{self, JoinInfo};
 use crate::tr;
+use crate::version::{self, Version};
 use crate::world::{look_at, within_reach, BlockPos, Face, Vec3, EYE_HEIGHT};
 use mc_proto::buf::PacketBuf;
 use std::io;
@@ -59,6 +60,8 @@ fn is_timeout(e: &io::Error) -> bool {
 
 pub struct PlayClient {
     pub conn: Connection,
+    /// Release spoken on this connection (packet ids and layouts).
+    pub ver: &'static Version,
     pub feet: Vec3,
     pub yaw: f32,
     pub pitch: f32,
@@ -80,7 +83,7 @@ pub struct PlayClient {
 
 impl PlayClient {
     pub fn join(addr: &str, host: &str, port: u16, name: &str) -> io::Result<(Self, JoinInfo)> {
-        Self::join_v(addr, host, port, name, mc_proto::PROTOCOL_VERSION)
+        Self::join_v(addr, host, port, name, version::active().protocol)
     }
 
     /// Join announcing an explicit protocol number (see [`crate::version`]).
@@ -88,6 +91,7 @@ impl PlayClient {
         let (conn, join) = proto::login_offline_v(addr, host, port, name, protocol, |_, _, _| {})?;
         let mut client = PlayClient {
             conn,
+            ver: version::active(),
             feet: Vec3::new(0.0, 0.0, 0.0),
             yaw: 0.0,
             pitch: 0.0,
@@ -119,63 +123,45 @@ impl PlayClient {
 
     /// Handle one incoming packet (or time out): kicks, teleports and keepalives.
     pub fn pump_once(&mut self) -> io::Result<()> {
+        let p = self.ver.packets();
         match self.conn.recv() {
             Ok((id, mut body)) => {
                 match id {
-                    ids::CB_PLAY_LOGIN => {
+                    x if x == p.cb_play_login => {
                         self.entity_id = body.read_i32().unwrap_or(0);
                     }
-                    ids::CB_PLAY_KEEPALIVE => {
+                    x if x == p.cb_play_keep_alive => {
                         let k = body.read_i64().unwrap_or(0);
                         let mut r = PacketBuf::new();
                         r.write_i64(k);
-                        self.conn.send(ids::SB_PLAY_KEEPALIVE, r.as_slice())?;
+                        self.conn.send(p.sb_play_keep_alive, r.as_slice())?;
                     }
-                    ids::CB_PLAY_PING => {
-                        // transaction ping → pong (play) 0x27
-                        let p = body.read_i32().unwrap_or(0);
+                    x if x == p.cb_play_ping => {
+                        let v = body.read_i32().unwrap_or(0);
                         let mut r = PacketBuf::new();
-                        r.write_i32(p);
-                        self.conn.send(0x27, r.as_slice())?;
+                        r.write_i32(v);
+                        self.conn.send(p.sb_play_pong, r.as_slice())?;
                     }
-                    ids::CB_PLAY_SYNC_POS => {
-                        let x = body.read_f64().unwrap_or(self.feet.x);
-                        let y = body.read_f64().unwrap_or(self.feet.y);
-                        let z = body.read_f64().unwrap_or(self.feet.z);
-                        let yaw = body.read_f32().unwrap_or(self.yaw);
-                        let pitch = body.read_f32().unwrap_or(self.pitch);
-                        let flags = body.read_u8().unwrap_or(0);
-                        let tp = body.read_varint().unwrap_or(0);
-                        let (p, y, pt) = apply_teleport((self.feet, self.yaw, self.pitch), (x, y, z, yaw, pitch), flags);
-                        self.feet = p;
-                        self.yaw = y;
-                        self.pitch = pt;
-                        let mut r = PacketBuf::new();
-                        r.write_varint(tp);
-                        self.conn.send(ids::SB_PLAY_CONFIRM_TELEPORT, r.as_slice())?;
-                        self.teleports += 1;
-                        // After confirming, report the current position
-                        self.send_pos_look(true)?;
-                    }
-                    ids::CB_PLAY_CHUNK_BATCH_FINISHED => {
+                    x if x == p.cb_play_player_position => self.on_teleport(&mut body)?,
+                    x if x == p.cb_play_chunk_batch_finished => {
                         // the server waits for this answer before it sends the next batch
-                        self.conn.send(ids::SB_PLAY_CHUNK_BATCH_RECEIVED, proto::chunk_batch_received(9.0).as_slice())?;
+                        self.conn.send(p.sb_play_chunk_batch_received, proto::chunk_batch_received(9.0).as_slice())?;
                     }
-                    ids::CB_PLAY_BLOCK_CHANGE => {
+                    x if x == p.cb_play_block_update => {
                         if let Some((pos, state)) = blocklog::parse_block_change(&mut body) {
                             self.blocks.record(pos, state);
                         }
                     }
-                    ids::CB_PLAY_MULTI_BLOCK_CHANGE => {
+                    x if x == p.cb_play_section_blocks_update => {
                         for (pos, state) in blocklog::parse_multi_block_change(&mut body).unwrap_or_default() {
                             self.blocks.record(pos, state);
                         }
                     }
-                    ids::CB_PLAY_DISCONNECT => {
+                    x if x == p.cb_play_disconnect => {
                         // play-state reason is a network NBT component (docs/RE/protocol.md)
                         self.kicked = Some(crate::text::disconnect_reason(&mut body));
                     }
-                    ids::CB_PLAY_UPDATE_HEALTH => {
+                    x if x == p.cb_play_set_health => {
                         let health = body.read_f32().unwrap_or(20.0);
                         if health <= 0.0 {
                             self.kicked = Some(tr!("died", "사망"));
@@ -188,6 +174,26 @@ impl PlayClient {
             Err(e) if is_timeout(&e) => Ok(()),
             Err(e) => Err(e),
         }
+    }
+
+    /// Apply a server teleport, confirm it, and report the resulting position.
+    fn on_teleport(&mut self, body: &mut PacketBuf) -> io::Result<()> {
+        let Some(t) = codec::read_teleport(self.ver.layout, body) else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "unreadable player_position packet"));
+        };
+        let new = (t.pos.0, t.pos.1, t.pos.2, t.yaw, t.pitch);
+        (self.feet, self.yaw, self.pitch) = apply_teleport((self.feet, self.yaw, self.pitch), new, t.flags);
+        let p = self.ver.packets();
+        let confirm = codec::accept_teleport(self.ver.layout, t.id, (self.feet, self.yaw, self.pitch));
+        self.conn.send(p.sb_play_accept_teleportation, confirm.as_slice())?;
+        self.teleports += 1;
+        // Newer releases ignore movement and clicks until the client says it has loaded
+        // (or 60 server ticks pass).
+        if self.teleports == 1 && p.sb_play_player_loaded >= 0 {
+            self.conn.send(p.sb_play_player_loaded, &[])?;
+        }
+        // After confirming, report the current position
+        self.send_pos_look(true)
     }
 
     /// Wait for `dur` while answering incoming packets (not a busy loop).
@@ -207,8 +213,8 @@ impl PlayClient {
         b.write_f64(self.feet.x);
         b.write_f64(self.feet.y);
         b.write_f64(self.feet.z);
-        b.write_bool(on_ground);
-        self.conn.send(ids::SB_PLAY_SET_POS, b.as_slice())
+        b.write_bool(on_ground); // newer releases read this byte as flags: bit 0 = on ground
+        self.send_move(self.ver.packets().sb_play_move_player_pos, b.as_slice())
     }
 
     fn send_pos_look(&mut self, on_ground: bool) -> io::Result<()> {
@@ -219,7 +225,29 @@ impl PlayClient {
         b.write_f32(self.yaw);
         b.write_f32(self.pitch);
         b.write_bool(on_ground);
-        self.conn.send(ids::SB_PLAY_SET_POS_ROT, b.as_slice())
+        self.send_move(self.ver.packets().sb_play_move_player_pos_rot, b.as_slice())
+    }
+
+    /// A movement packet, closed with client_tick_end where the release has it: 26.3 disconnects
+    /// a client that sends two positions within one of its own ticks.
+    fn send_move(&mut self, id: i32, body: &[u8]) -> io::Result<()> {
+        self.conn.send(id, body)?;
+        let end = self.ver.packets().sb_play_client_tick_end;
+        if end >= 0 {
+            self.conn.send(end, &[])?;
+        }
+        Ok(())
+    }
+
+    /// Arm swing animation; releases without the swing packet animate on the server.
+    fn swing(&mut self) -> io::Result<()> {
+        let id = self.ver.packets().sb_play_swing;
+        if id < 0 {
+            return Ok(());
+        }
+        let mut s = PacketBuf::new();
+        s.write_varint(0); // main hand
+        self.conn.send(id, s.as_slice())
     }
 
     /// Wait for the next 20 Hz tick boundary while answering incoming packets.
@@ -289,11 +317,9 @@ impl PlayClient {
 
     /// Sprint (or walk again). Tells the server, like the vanilla client, and changes the stride.
     pub fn set_sprint(&mut self, on: bool) -> io::Result<()> {
-        let mut b = PacketBuf::new();
-        b.write_varint(self.entity_id);
-        b.write_varint(if on { 3 } else { 4 }); // start / stop sprinting (docs/RE/protocol.md)
-        b.write_varint(0);
-        self.conn.send(ids::SB_PLAY_PLAYER_COMMAND, b.as_slice())?;
+        let action = if on { PlayerAction::StartSprinting } else { PlayerAction::StopSprinting };
+        let b = codec::player_command(self.ver.layout, self.entity_id, action);
+        self.conn.send(self.ver.packets().sb_play_player_command, b.as_slice())?;
         self.stride = if on { SPRINT_STEP } else { WALK_STEP };
         Ok(())
     }
@@ -444,10 +470,8 @@ impl PlayClient {
         b.write_position(pos.x, pos.y, pos.z);
         b.write_u8(Face::Up as u8);
         b.write_varint(self.seq);
-        self.conn.send(ids::SB_PLAY_BLOCK_DIG, b.as_slice())?;
-        let mut s = PacketBuf::new();
-        s.write_varint(0);
-        self.conn.send(ids::SB_PLAY_SWING_ARM, s.as_slice())
+        self.conn.send(self.ver.packets().sb_play_player_action, b.as_slice())?;
+        self.swing()
     }
 
     /// Place one scaffold block by clicking `face` of `support` (bridging).
@@ -513,18 +537,12 @@ impl PlayClient {
             return Ok(());
         }
         // Hotbar slot 0 = inventory slot 36
-        let mut b = PacketBuf::new();
-        b.write_i16(36);
-        // Slot: count=1, itemId, add=0, remove=0
-        b.write_varint(1);
-        b.write_varint(item_id);
-        b.write_varint(0);
-        b.write_varint(0);
-        self.conn.send(ids::SB_PLAY_SET_CREATIVE_SLOT, b.as_slice())?;
+        let p = self.ver.packets();
+        self.conn.send(p.sb_play_set_creative_mode_slot, codec::creative_slot(self.ver.layout, 36, item_id).as_slice())?;
         // Select hotbar slot 0
         let mut h = PacketBuf::new();
         h.write_i16(0);
-        self.conn.send(ids::SB_PLAY_HELD_ITEM, h.as_slice())?;
+        self.conn.send(p.sb_play_set_carried_item, h.as_slice())?;
         self.held_item = item_id;
         Ok(())
     }
@@ -532,29 +550,21 @@ impl PlayClient {
     /// Right-click the `face` of the `support` block, placing a block next to it.
     fn use_item_on(&mut self, support: BlockPos, face: Face, cursor: (f32, f32, f32)) -> io::Result<()> {
         self.seq += 1;
-        let mut b = PacketBuf::new();
-        b.write_varint(0); // hand = main
-        b.write_position(support.x, support.y, support.z);
-        b.write_varint(face as i32);
-        b.write_f32(cursor.0);
-        b.write_f32(cursor.1);
-        b.write_f32(cursor.2);
-        b.write_bool(false); // insideBlock
-        b.write_varint(self.seq);
-        self.conn.send(ids::SB_PLAY_USE_ITEM_ON, b.as_slice())?;
-        // Swing arm (animation)
-        let mut s = PacketBuf::new();
-        s.write_varint(0);
-        self.conn.send(ids::SB_PLAY_SWING_ARM, s.as_slice())
+        let b = codec::use_item_on(self.ver.layout, support, face, cursor, self.seq);
+        self.conn.send(self.ver.packets().sb_play_use_item_on, b.as_slice())?;
+        self.swing()
     }
 
-    /// player_command press / release shift (docs/RE/protocol.md); the pose follows next tick.
+    /// Press or release shift; the pose follows next tick.
     fn set_sneak(&mut self, on: bool) -> io::Result<()> {
-        let mut b = PacketBuf::new();
-        b.write_varint(self.entity_id);
-        b.write_varint(i32::from(!on));
-        b.write_varint(0);
-        self.conn.send(ids::SB_PLAY_PLAYER_COMMAND, b.as_slice())?;
+        let p = self.ver.packets();
+        if self.ver.layout.sneak_by_input {
+            self.conn.send(p.sb_play_player_input, codec::shift_input(on).as_slice())?;
+        } else {
+            let action = if on { PlayerAction::PressShift } else { PlayerAction::ReleaseShift };
+            let b = codec::player_command(self.ver.layout, self.entity_id, action);
+            self.conn.send(p.sb_play_player_command, b.as_slice())?;
+        }
         self.idle(Duration::from_millis(60))
     }
 

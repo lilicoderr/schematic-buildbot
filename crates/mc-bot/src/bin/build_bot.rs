@@ -57,7 +57,7 @@ OPTIONS:
   --dry-run            print size, block list, layer map and state report, then exit
   --delay-ms <N>       pause after each placement (default 25)
   --rate <N>           cap placements per second (overrides --delay-ms)
-  --version <V>        Minecraft version to announce (default 1.21.1)
+  --version <V>        Minecraft version: 1.20.4, 1.21, 1.21.1, 1.21.4, 26.3 (default 1.21.1)
   --verify             re-place blocks the server did not confirm (a report is always printed)
   --resume             continue an interrupted build from the progress file
   --progress-file <F>  progress file path (default .buildbot-progress)
@@ -79,7 +79,7 @@ build-bot — 설계도를 Minecraft 오프라인 서버에 건축
   --dry-run            크기·블록 목록·층별 도면·상태 보고를 출력하고 종료
   --delay-ms <N>       설치마다 대기(기본 25)
   --rate <N>           초당 설치 수 상한 (--delay-ms 보다 우선)
-  --version <V>        알릴 마인크래프트 버전 (기본 1.21.1)
+  --version <V>        마인크래프트 버전: 1.20.4, 1.21, 1.21.1, 1.21.4, 26.3 (기본 1.21.1)
   --verify             서버가 확인하지 않은 블록을 다시 설치 (확인 보고는 항상 출력)
   --resume             중단된 건축을 진행 파일에서 이어서 진행
   --progress-file <F>  진행 파일 경로 (기본 .buildbot-progress)
@@ -167,6 +167,7 @@ fn main() {
             eprintln!("{e}");
             std::process::exit(2);
         });
+    version::set_active(version); // item names are checked against this release
 
     let target = opts.positional.first().map(String::as_str).unwrap_or("127.0.0.1:25566");
     let name = opts.positional.get(1).map(String::as_str).unwrap_or("BuildBot");
@@ -339,7 +340,7 @@ fn resume_point(opts: &Opts, path: &Path, fingerprint: u64, total: usize) -> Opt
 /// Upcoming blocks considered when choosing where to stand.
 const LOOKAHEAD: usize = 48;
 
-fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &Opts, version: Version) -> io::Result<()> {
+fn run(addr: &str, host: &str, port: u16, name: &str, schem: &Schematic, opts: &Opts, version: &Version) -> io::Result<()> {
     println!(
         "{}",
         tr!("=== connecting ({} as {}, Minecraft {}) ===", "=== 접속 ({} as {}, Minecraft {}) ===", addr, name, version.name)
