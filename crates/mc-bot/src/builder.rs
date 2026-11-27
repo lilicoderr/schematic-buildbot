@@ -39,6 +39,19 @@ pub fn walk_step(feet: Vec3, target: Vec3) -> Vec3 {
     Vec3::new(feet.x + dx / d * s, feet.y, feet.z + dz / d * s)
 }
 
+/// New (position, yaw, pitch) after a player_position packet. Relative bits (docs/RE/movement.md):
+/// X 0x01, Y 0x02, Z 0x04, Y_ROT (yaw) 0x08, X_ROT (pitch) 0x10.
+pub fn apply_teleport(cur: (Vec3, f32, f32), new: (f64, f64, f64, f32, f32), flags: u8) -> (Vec3, f32, f32) {
+    let (feet, yaw, pitch) = cur;
+    let rel = |bit: u8| flags & bit != 0;
+    let pos = Vec3::new(
+        if rel(0x01) { feet.x + new.0 } else { new.0 },
+        if rel(0x02) { feet.y + new.1 } else { new.1 },
+        if rel(0x04) { feet.z + new.2 } else { new.2 },
+    );
+    (pos, if rel(0x08) { yaw + new.3 } else { new.3 }, if rel(0x10) { pitch + new.4 } else { new.4 })
+}
+
 /// A read that simply timed out. Windows can also report a timed-out socket read as
 /// "overlapped I/O in progress" (os error 997) or WSAETIMEDOUT (10060).
 fn is_timeout(e: &io::Error) -> bool {
@@ -86,7 +99,7 @@ impl PlayClient {
         client.conn.set_read_timeout(Some(Duration::from_millis(5)))?;
         // Pump packets until the first teleport sync fixes our position
         let deadline = Instant::now() + Duration::from_secs(10);
-        while client.feet == Vec3::new(0.0, 0.0, 0.0) && Instant::now() < deadline {
+        while client.teleports == 0 && Instant::now() < deadline {
             client.pump_once()?;
             if client.kicked.is_some() {
                 break;
@@ -121,12 +134,10 @@ impl PlayClient {
                         let pitch = body.read_f32().unwrap_or(self.pitch);
                         let flags = body.read_u8().unwrap_or(0);
                         let tp = body.read_varint().unwrap_or(0);
-                        // flag bits: 0x01 = X relative, ... (servers normally send absolute values)
-                        if flags & 0x01 == 0 { self.feet.x = x; } else { self.feet.x += x; }
-                        if flags & 0x02 == 0 { self.feet.y = y; } else { self.feet.y += y; }
-                        if flags & 0x04 == 0 { self.feet.z = z; } else { self.feet.z += z; }
-                        if flags & 0x08 == 0 { self.pitch = pitch; }
-                        if flags & 0x10 == 0 { self.yaw = yaw; }
+                        let (p, y, pt) = apply_teleport((self.feet, self.yaw, self.pitch), (x, y, z, yaw, pitch), flags);
+                        self.feet = p;
+                        self.yaw = y;
+                        self.pitch = pt;
                         let mut r = PacketBuf::new();
                         r.write_varint(tp);
                         self.conn.send(ids::SB_PLAY_CONFIRM_TELEPORT, r.as_slice())?;
@@ -496,6 +507,19 @@ mod tests {
     fn supported(p: Vec3, ground_y: i32) -> bool {
         let solid = |_x: i32, y: i32, _z: i32| y < ground_y;
         solid(p.x.floor() as i32, p.y.floor() as i32 - 1, p.z.floor() as i32)
+    }
+
+    #[test]
+    fn relative_flags_use_the_real_bit_order() {
+        let cur = (Vec3::new(1.0, 2.0, 3.0), 10.0, 20.0);
+        // only yaw relative (0x08): pitch is absolute
+        let (_, yaw, pitch) = apply_teleport(cur, (0.0, 0.0, 0.0, 5.0, 7.0), 0x08);
+        assert_eq!((yaw, pitch), (15.0, 7.0));
+        // only pitch relative (0x10)
+        let (_, yaw, pitch) = apply_teleport(cur, (0.0, 0.0, 0.0, 5.0, 7.0), 0x10);
+        assert_eq!((yaw, pitch), (5.0, 27.0));
+        let (p, _, _) = apply_teleport(cur, (1.0, 1.0, 1.0, 0.0, 0.0), 0x07);
+        assert_eq!((p.x, p.y, p.z), (2.0, 3.0, 4.0));
     }
 
     #[test]
