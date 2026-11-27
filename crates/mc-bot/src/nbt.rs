@@ -53,10 +53,17 @@ impl Nbt {
     }
 }
 
+/// Largest decompressed blueprint accepted (a gzip bomb must not eat the machine).
+pub const MAX_DECOMPRESSED: u64 = 128 << 20;
+/// Most tags in one document: every tag costs tens of bytes in memory.
+const MAX_TAGS: usize = 4_000_000;
+/// Vanilla's own nesting limit; deeper input would overflow the stack.
+const MAX_DEPTH: u32 = 512;
+
 /// Detect compression and read the NBT root. Returns (root name, value).
 pub fn read(bytes: &[u8]) -> Result<(String, Nbt), String> {
     let data = decompress(bytes)?;
-    let mut cur = Cursor { data: &data, pos: 0 };
+    let mut cur = Cursor { data: &data, pos: 0, depth: 0, tags: 0 };
     let tag = cur.u8()?;
     if tag == 0 {
         return Ok((String::new(), Nbt::End));
@@ -68,7 +75,7 @@ pub fn read(bytes: &[u8]) -> Result<(String, Nbt), String> {
 
 /// Network NBT as used by play/configuration packets since 1.20.2: the root tag has no name.
 pub fn read_network(bytes: &[u8]) -> Result<Nbt, String> {
-    let mut cur = Cursor { data: bytes, pos: 0 };
+    let mut cur = Cursor { data: bytes, pos: 0, depth: 0, tags: 0 };
     let tag = cur.u8()?;
     if tag == 0 {
         return Ok(Nbt::End);
@@ -78,26 +85,33 @@ pub fn read_network(bytes: &[u8]) -> Result<Nbt, String> {
 
 fn decompress(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
-        let mut out = Vec::new();
-        GzDecoder::new(bytes).read_to_end(&mut out).map_err(|e| format!("gzip: {e}"))?;
-        Ok(out)
+        inflate(GzDecoder::new(bytes), "gzip")
     } else if bytes.len() >= 2 && bytes[0] == 0x78 {
-        let mut out = Vec::new();
-        ZlibDecoder::new(bytes).read_to_end(&mut out).map_err(|e| format!("zlib: {e}"))?;
-        Ok(out)
+        inflate(ZlibDecoder::new(bytes), "zlib")
     } else {
         Ok(bytes.to_vec())
     }
 }
 
+fn inflate(r: impl Read, what: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    r.take(MAX_DECOMPRESSED + 1).read_to_end(&mut out).map_err(|e| format!("{what}: {e}"))?;
+    if out.len() as u64 > MAX_DECOMPRESSED {
+        return Err(format!("{what}: larger than {} MB decompressed", MAX_DECOMPRESSED >> 20));
+    }
+    Ok(out)
+}
+
 struct Cursor<'a> {
     data: &'a [u8],
     pos: usize,
+    depth: u32,
+    tags: usize,
 }
 
 impl<'a> Cursor<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
-        if self.pos + n > self.data.len() {
+        if n > self.data.len() - self.pos {
             return Err("NBT: unexpected end of data".into());
         }
         let s = &self.data[self.pos..self.pos + n];
@@ -122,7 +136,28 @@ impl<'a> Cursor<'a> {
         Ok(String::from_utf8_lossy(b).into_owned())
     }
 
+    /// An array length, refused when the rest of the input cannot hold that many elements
+    /// (so a forged length never allocates).
+    fn len(&mut self, element: usize) -> Result<usize, String> {
+        let n = self.i32()?.max(0) as usize;
+        if n > (self.data.len() - self.pos) / element {
+            return Err("NBT: array longer than the data".into());
+        }
+        Ok(n)
+    }
+
     fn payload(&mut self, tag: u8) -> Result<Nbt, String> {
+        self.tags += 1;
+        self.depth += 1;
+        if self.depth > MAX_DEPTH || self.tags > MAX_TAGS {
+            return Err("NBT: nested too deeply or too many tags".into());
+        }
+        let value = self.value(tag);
+        self.depth -= 1;
+        value
+    }
+
+    fn value(&mut self, tag: u8) -> Result<Nbt, String> {
         Ok(match tag {
             1 => Nbt::Byte(self.u8()? as i8),
             2 => Nbt::Short(self.i16()?),
@@ -131,14 +166,14 @@ impl<'a> Cursor<'a> {
             5 => Nbt::Float(f32::from_be_bytes(self.take(4)?.try_into().unwrap())),
             6 => Nbt::Double(f64::from_be_bytes(self.take(8)?.try_into().unwrap())),
             7 => {
-                let len = self.i32()?.max(0) as usize;
+                let len = self.len(1)?;
                 Nbt::ByteArray(self.take(len)?.to_vec())
             }
             8 => Nbt::String(self.string()?),
             9 => {
                 let elem = self.u8()?;
-                let len = self.i32()?.max(0) as usize;
-                let mut list = Vec::with_capacity(len);
+                let len = self.len(1)?;
+                let mut list = Vec::new();
                 for _ in 0..len {
                     list.push(self.payload(elem)?);
                 }
@@ -158,7 +193,7 @@ impl<'a> Cursor<'a> {
                 Nbt::Compound(map)
             }
             11 => {
-                let len = self.i32()?.max(0) as usize;
+                let len = self.len(4)?;
                 let mut v = Vec::with_capacity(len);
                 for _ in 0..len {
                     v.push(self.i32()?);
@@ -166,7 +201,7 @@ impl<'a> Cursor<'a> {
                 Nbt::IntArray(v)
             }
             12 => {
-                let len = self.i32()?.max(0) as usize;
+                let len = self.len(8)?;
                 let mut v = Vec::with_capacity(len);
                 for _ in 0..len {
                     v.push(self.i64()?);

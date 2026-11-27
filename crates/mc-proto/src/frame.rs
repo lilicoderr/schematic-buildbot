@@ -11,6 +11,14 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use std::io::{self, Read, Write};
 
+/// Vanilla limits: a frame length fits a 3-byte VarInt, an inflated packet at most 8 MiB.
+pub const MAX_FRAME: usize = (1 << 21) - 1;
+pub const MAX_PACKET: usize = 8 << 20;
+
+fn bad(msg: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, msg.to_string())
+}
+
 /// Read one VarInt byte by byte from a Read (used for the frame length).
 pub fn read_varint_from<R: Read>(reader: &mut R) -> io::Result<i32> {
     let mut result: u32 = 0;
@@ -66,6 +74,9 @@ pub fn encode(id: i32, body: &[u8], threshold: Option<usize>) -> Vec<u8> {
 /// Read one frame from a Read and return (packet id, body buffer).
 pub fn read_frame<R: Read>(reader: &mut R, threshold: Option<usize>) -> io::Result<(i32, PacketBuf)> {
     let frame_len = read_varint_from(reader)? as usize;
+    if frame_len > MAX_FRAME {
+        return Err(bad("frame too long"));
+    }
     let mut frame = vec![0u8; frame_len];
     reader.read_exact(&mut frame)?;
     decode_frame(frame, threshold)
@@ -88,6 +99,9 @@ pub fn try_parse_frame(buf: &[u8], threshold: Option<usize>) -> io::Result<Optio
             return Err(io::Error::new(io::ErrorKind::InvalidData, "VarInt too long"));
         }
     }
+    if len as usize > MAX_FRAME {
+        return Err(bad("frame too long"));
+    }
     let end = used + len as usize;
     if buf.len() < end {
         return Ok(None);
@@ -109,9 +123,15 @@ fn decode_frame(frame: Vec<u8>, threshold: Option<usize>) -> io::Result<(i32, Pa
             if data_len == 0 {
                 rest // not compressed
             } else {
-                let mut dec = ZlibDecoder::new(&rest[..]);
+                if data_len > MAX_PACKET {
+                    return Err(bad("compressed packet declares too much data"));
+                }
+                let dec = ZlibDecoder::new(&rest[..]);
                 let mut out = Vec::with_capacity(data_len);
-                dec.read_to_end(&mut out)?;
+                dec.take(data_len as u64 + 1).read_to_end(&mut out)?;
+                if out.len() != data_len {
+                    return Err(bad("inflated size differs from the declared size"));
+                }
                 out
             }
         }

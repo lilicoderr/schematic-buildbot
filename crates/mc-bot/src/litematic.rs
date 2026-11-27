@@ -46,13 +46,13 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
             .iter()
             .map(|e| {
                 let n = e.get("Name").and_then(Nbt::as_str).unwrap_or("air");
-                let name = n.strip_prefix("minecraft:").unwrap_or(n).to_string();
+                let name = crate::schematic::split_state(n).0;
                 let props = e
                     .get("Properties")
                     .and_then(Nbt::as_compound)
                     .map(|m| {
                         m.iter()
-                            .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                            .filter_map(|(k, v)| v.as_str().map(|v| (crate::schematic::clean(k), crate::schematic::clean(v))))
                             .collect()
                     })
                     .unwrap_or_default();
@@ -64,6 +64,10 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
             .and_then(Nbt::as_long_array)
             .ok_or(tr!("BlockStates missing", "BlockStates 없음"))?;
         let bits = (usize::BITS - palette.len().saturating_sub(1).leading_zeros()).max(2);
+        let side = crate::schematic::MAX_SIDE;
+        if [sx, sy, sz].iter().any(|d| !(-side..=side).contains(d)) || [px, py, pz].iter().any(|p| p.unsigned_abs() > 30_000_000) {
+            return Err(crate::schematic::too_big());
+        }
         let (w, h, l) = (sx.abs(), sy.abs(), sz.abs());
         // A negative size extends in the opposite direction from Position.
         let (ox, oy, oz) = (
@@ -78,6 +82,9 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
                     let v = packed_value(longs, idx, bits).ok_or(tr!("BlockStates too short", "BlockStates 길이 부족"))? as usize;
                     if let Some((bn, props)) = palette.get(v) {
                         if !is_air(bn) {
+                            if raw.len() >= crate::schematic::MAX_BLOCKS {
+                                return Err(crate::schematic::too_big());
+                            }
                             raw.push((ox + x, oy + y, oz + z, bn.clone(), props.clone()));
                         }
                     }
@@ -94,6 +101,10 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
     let minx = raw.iter().map(|b| b.0).min().unwrap();
     let miny = raw.iter().map(|b| b.1).min().unwrap();
     let minz = raw.iter().map(|b| b.2).min().unwrap();
+    // regions far apart would make a huge box out of a few blocks
+    if raw.iter().any(|b| [b.0 as i64 - minx as i64, b.1 as i64 - miny as i64, b.2 as i64 - minz as i64].iter().any(|d| *d >= crate::schematic::MAX_SIDE as i64)) {
+        return Err(crate::schematic::too_big());
+    }
     let blocks = raw
         .into_iter()
         .map(|(x, y, z, name, props)| Block { pos: BlockPos::new(x - minx, y - miny, z - minz), name, props })

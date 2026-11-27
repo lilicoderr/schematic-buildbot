@@ -7,6 +7,15 @@ fn num<T: std::str::FromStr>(s: Option<&str>, line: usize) -> Result<T, String> 
     s.and_then(|v| v.parse().ok()).ok_or_else(|| format!("line {line}: bad number"))
 }
 
+/// A block coordinate inside the world border, so later arithmetic cannot overflow.
+fn coord(s: Option<&str>, line: usize) -> Result<i32, String> {
+    let v: i32 = num(s, line)?;
+    if v.unsigned_abs() > 30_000_000 {
+        return Err(format!("line {line}: coordinate outside the world"));
+    }
+    Ok(v)
+}
+
 fn click(tok: &str, line: usize) -> Result<ClickStep, String> {
     let p: Vec<&str> = tok.split(',').collect();
     if p.len() != 7 {
@@ -14,7 +23,7 @@ fn click(tok: &str, line: usize) -> Result<ClickStep, String> {
     }
     let face = Face::from_name(p[3]).ok_or_else(|| format!("line {line}: bad face '{}'", p[3]))?;
     Ok(ClickStep {
-        support: BlockPos::new(num(p.first().copied(), line)?, num(p.get(1).copied(), line)?, num(p.get(2).copied(), line)?),
+        support: BlockPos::new(coord(p.first().copied(), line)?, coord(p.get(1).copied(), line)?, coord(p.get(2).copied(), line)?),
         face,
         cursor: (num(p.get(4).copied(), line)?, num(p.get(5).copied(), line)?, num(p.get(6).copied(), line)?),
     })
@@ -31,15 +40,15 @@ fn header_line(h: &mut Header, rest: &str, line: usize, seen_version: &mut bool)
             *seen_version = true;
         }
         Some("schematic") => h.schematic_hash = u64::from_str_radix(it.next().unwrap_or(""), 16).map_err(|e| e.to_string())?,
-        Some("origin") => h.origin = (num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?),
-        Some("start") => h.start = (num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?),
+        Some("origin") => h.origin = (coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?),
+        Some("start") => h.start = (coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?),
         Some("protocol") => h.protocol = num(it.next(), line)?,
         Some("stat") => {
             let k = it.next().unwrap_or("").to_string();
             h.stats.push((k, it.collect::<Vec<_>>().join(" ")));
         }
         Some("unreachable") => {
-            let p = BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?);
+            let p = BlockPos::new(coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?);
             h.unreachable.push((p, it.next().unwrap_or("").to_string()));
         }
         _ => {}
@@ -61,24 +70,24 @@ pub fn parse(text: &str) -> Result<Plan, String> {
         }
         let mut it = raw.split_whitespace();
         let step = match it.next() {
-            Some("MOVE") => Step::Move((num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?)),
-            Some("PILLAR") => Step::Pillar((num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?)),
+            Some("MOVE") => Step::Move((coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?)),
+            Some("PILLAR") => Step::Pillar((coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?)),
             Some("AUTO") => Step::Auto {
-                pos: BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?),
+                pos: BlockPos::new(coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?),
                 state: it.next().unwrap_or("").to_string(),
             },
-            Some("BREAK") => Step::Break(BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?)),
+            Some("BREAK") => Step::Break(BlockPos::new(coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?)),
             Some("CHECKPOINT") => Step::Checkpoint {
                 n: num(it.next(), line)?,
                 count: num(it.next(), line)?,
                 hash: u64::from_str_radix(it.next().unwrap_or(""), 16).map_err(|e| e.to_string())?,
             },
             Some("SUPPORT") => {
-                let pos = BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?);
+                let pos = BlockPos::new(coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?);
                 Step::Support { pos, clicks: it.map(|t| click(t, line)).collect::<Result<Vec<_>, _>>()? }
             }
             Some("PLACE") => {
-                let pos = BlockPos::new(num(it.next(), line)?, num(it.next(), line)?, num(it.next(), line)?);
+                let pos = BlockPos::new(coord(it.next(), line)?, coord(it.next(), line)?, coord(it.next(), line)?);
                 let state = it.next().ok_or_else(|| format!("line {line}: no state"))?.to_string();
                 let yaw = match it.next() {
                     Some("-") => None,

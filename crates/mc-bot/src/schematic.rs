@@ -60,6 +60,14 @@ impl Block {
     }
 }
 
+/// Limits for any blueprint format: a side of the box, and the number of non-air blocks.
+pub const MAX_SIDE: i32 = 4096;
+pub const MAX_BLOCKS: usize = 2_000_000;
+
+pub(crate) fn too_big() -> String {
+    tr!("the blueprint is too large (side over {} or over {} blocks)", "설계도가 너무 큽니다 (한 변 {} 초과 또는 {}블록 초과)", MAX_SIDE, MAX_BLOCKS)
+}
+
 /// Split `minecraft:oak_stairs[facing=east]` into (`oak_stairs`, {facing: east}).
 /// Side length of the square tiles a layer is swept in. Consecutive blocks stay within a few
 /// cells of each other, so the walking bot rarely has to move between placements.
@@ -77,16 +85,22 @@ pub fn sweep_key(p: BlockPos) -> (i32, i32, i32, i32) {
     (tz, tile_x, p.z, row_x)
 }
 
+/// No blanks or control characters: names end up in the line-based plan text, where a newline
+/// from a hostile file would inject plan steps.
+pub(crate) fn clean(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace() && !c.is_control()).collect()
+}
+
 pub fn split_state(state: &str) -> (String, BTreeMap<String, String>) {
     let (head, rest) = match state.split_once('[') {
         Some((h, r)) => (h, r.trim_end_matches(']')),
         None => (state, ""),
     };
-    let name = head.strip_prefix("minecraft:").unwrap_or(head).trim().to_string();
+    let name = clean(head.strip_prefix("minecraft:").unwrap_or(head));
     let mut props = BTreeMap::new();
     for kv in rest.split(',').filter(|s| !s.is_empty()) {
         if let Some((k, v)) = kv.split_once('=') {
-            props.insert(k.trim().to_string(), v.trim().to_string());
+            props.insert(clean(k), clean(v));
         }
     }
     (name, props)
@@ -124,7 +138,7 @@ impl Schematic {
                 "palette" => {
                     let ch = words.next().ok_or(tr!("line {ln}: palette character missing", "{ln}: palette 글자 없음"))?;
                     let block = words.next().ok_or(tr!("line {ln}: palette block missing", "{ln}: palette 블록 없음"))?;
-                    let c = ch.chars().next().unwrap();
+                    let c = ch.chars().next().ok_or(tr!("line {ln}: palette character missing", "{ln}: palette 글자 없음"))?;
                     palette.insert(c, block.trim().to_string());
                 }
                 "layer" => {
@@ -134,6 +148,9 @@ impl Schematic {
                         .trim()
                         .parse()
                         .map_err(|_| tr!("line {ln}: layer y is not a number", "{ln}: layer y 가 숫자가 아님"))?;
+                    if !(-MAX_SIDE..=MAX_SIDE).contains(&y) {
+                        return Err(too_big());
+                    }
                     cur_y = Some(y);
                     z = 0;
                 }
@@ -148,6 +165,9 @@ impl Schematic {
                         let state = palette.get(&c).map(String::as_str).unwrap_or("air");
                         let block = Block::from_state(BlockPos::new(x as i32, y, z), state);
                         if block.name != "air" {
+                            if x >= MAX_SIDE as usize || z >= MAX_SIDE || blocks.len() >= MAX_BLOCKS {
+                                return Err(too_big());
+                            }
                             blocks.push(block);
                         }
                     }

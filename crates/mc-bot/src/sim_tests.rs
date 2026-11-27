@@ -112,7 +112,10 @@ S
         yaw: None,
         clicks: vec![ClickStep { support: BlockPos::new(5, -1, 5), face: Face::Up, cursor: (0.5, 1.0, 0.5) }],
     };
-    let on_door = place(5, 1, 5, 5, 0, 5, Face::Up);
+    let on_door = place(4, 0, 5, 5, 0, 5, Face::West);
     let e = simulate(&base_plan(vec![door, on_door]), &s).unwrap_err();
     assert!(e.msg.contains("usable block"), "{e:?}");
 }
+
+#[path = "sim_adversarial_tests.rs"]
+mod adversarial;

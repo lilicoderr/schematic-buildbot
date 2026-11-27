@@ -48,6 +48,10 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
     let height = schem.get("Height").and_then(Nbt::as_i32).ok_or(tr!("Height missing", "Height 없음"))?;
     let length = schem.get("Length").and_then(Nbt::as_i32).ok_or(tr!("Length missing", "Length 없음"))?;
 
+    if [width, height, length].iter().any(|d| !(1..=crate::schematic::MAX_SIDE).contains(d)) {
+        return Err(crate::schematic::too_big());
+    }
+
     // v2: 최상위 Palette+BlockData / v3: Blocks { Palette, Data }
     let (palette_tag, data_bytes) = if let Some(blocks) = schem.get("Blocks") {
         (blocks.get("Palette"), blocks.get("Data").and_then(Nbt::as_byte_array))
@@ -80,6 +84,9 @@ pub fn parse(bytes: &[u8], name: &str) -> Result<Schematic, String> {
         if let Some(state) = index_to_state.get(&idx) {
             let block = Block::from_state(BlockPos::new(x, y, z), state);
             if !is_air(&block.name) {
+                if blocks.len() >= crate::schematic::MAX_BLOCKS {
+                    return Err(crate::schematic::too_big());
+                }
                 blocks.push(block);
             }
         }

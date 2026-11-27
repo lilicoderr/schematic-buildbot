@@ -51,7 +51,19 @@ pub fn is_usable(name: &str) -> bool {
         "chest", "trapped_chest", "ender_chest", "barrel", "crafting_table", "furnace", "blast_furnace", "smoker",
         "anvil", "note_block", "lectern", "lever", "enchanting_table", "jukebox",
     ];
-    (name.ends_with("_door") && name != "iron_door")
+    // every block whose useWithoutItem / useItemOn consumes a click in the 1.21.1 server
+    const MORE: [&str; 26] = [
+        "hopper", "dispenser", "dropper", "brewing_stand", "beacon", "bell", "cake", "cartography_table",
+        "chiseled_bookshelf", "command_block", "chain_command_block", "repeating_command_block", "comparator",
+        "repeater", "composter", "crafter", "daylight_detector", "decorated_pot", "dragon_egg", "flower_pot",
+        "grindstone", "loom", "redstone_wire", "respawn_anchor", "smithing_table", "stonecutter",
+    ];
+    MORE.contains(&name)
+        || name.ends_with("anvil")
+        || name.ends_with("cauldron")
+        || name.ends_with("candle_cake")
+        || name.starts_with("potted_")
+        || (name.ends_with("_door") && name != "iron_door")
         || name.ends_with("_trapdoor")
         || name.ends_with("_fence_gate")
         || name.ends_with("_button")

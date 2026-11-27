@@ -43,7 +43,7 @@ pub fn parse_block_change(body: &mut PacketBuf) -> Option<(BlockPos, i32)> {
     Some((BlockPos::new(x, y, z), state))
 }
 
-/// Section Blocks Update: packed section coordinates + one varint record per changed block
+/// Section Blocks Update: packed section coordinates + one VarLong record per changed block
 /// (`state << 12 | x << 8 | z << 4 | y`, coordinates local to the 16-block section).
 pub fn parse_multi_block_change(body: &mut PacketBuf) -> Option<Vec<(BlockPos, i32)>> {
     let section = body.read_i64().ok()?;
@@ -51,9 +51,13 @@ pub fn parse_multi_block_change(body: &mut PacketBuf) -> Option<Vec<(BlockPos, i
     let sz = ((section << 22) >> 42) as i32;
     let sy = ((section << 44) >> 44) as i32;
     let count = body.read_varint().ok()?;
-    let mut out = Vec::with_capacity(count.max(0) as usize);
+    // a section has 4096 cells; a forged count must not allocate
+    if !(0..=4096).contains(&count) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(count as usize);
     for _ in 0..count {
-        let rec = body.read_varint().ok()? as u32;
+        let rec = body.read_varlong().ok()? as u64;
         let state = (rec >> 12) as i32;
         let (lx, lz, ly) = ((rec >> 8) & 0xF, (rec >> 4) & 0xF, rec & 0xF);
         out.push((BlockPos::new(sx * 16 + lx as i32, sy * 16 + ly as i32, sz * 16 + lz as i32), state));

@@ -28,6 +28,7 @@ pub mod scaffold;
 pub mod schem;
 pub mod shapes;
 pub mod sim;
+pub mod sim_rules;
 pub mod state_ids;
 pub mod state_table;
 pub mod slice;

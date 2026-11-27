@@ -21,6 +21,21 @@ pub fn is_standable_surface(name: &str, type_prop: Option<&str>) -> bool {
     if name.ends_with("_slab") {
         return type_prop != Some("bottom");
     }
+    // no collision at all, or a top below the block above: standing there hovers or sinks
+    const LOW: [&str; 33] = [
+        "redstone_wire", "tripwire", "tripwire_hook", "lever", "repeater", "comparator", "short_grass", "fern",
+        "dead_bush", "dandelion", "poppy", "blue_orchid", "allium", "azure_bluet", "oxeye_daisy", "cornflower",
+        "lily_of_the_valley", "wither_rose", "brown_mushroom", "red_mushroom", "sugar_cane", "cobweb", "snow",
+        "soul_sand", "mud", "farmland", "dirt_path", "chest", "trapped_chest", "ender_chest", "cactus",
+        "honey_block", "enchanting_table",
+    ];
+    const LOW_PARTS: [&str; 6] = ["_sign", "pressure_plate", "sapling", "tulip", "candle", "_banner"];
+    if LOW.contains(&name) || LOW_PARTS.iter().any(|p| name.contains(p)) {
+        return false;
+    }
+    if name == "jack_o_lantern" {
+        return true;
+    }
     const THIN: [&str; 14] = [
         "_pane", "bars", "fence", "_wall", "carpet", "trapdoor", "_door", "ladder", "torch", "lantern", "button",
         "rail", "vine", "chain",
