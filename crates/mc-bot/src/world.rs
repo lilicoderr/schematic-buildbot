@@ -115,17 +115,22 @@ pub fn look_at(eye: Vec3, target: Vec3) -> (f32, f32) {
 }
 
 pub const EYE_HEIGHT: f64 = 1.62;
-pub const REACH: f64 = 4.5; // server placement reach limit (with margin)
-
-/// Whether the eye-to-block-centre distance from `feet` is within placement reach.
-pub fn within_reach(feet: Vec3, block: BlockPos) -> bool {
-    let eye = Vec3::new(feet.x, feet.y + EYE_HEIGHT, feet.z);
-    eye.dist(block.center()) <= REACH
-}
-
-/// Largest eye-to-block-box distance accepted for the *clicked* block (the server allows 5.5:
-/// block interaction range 4.5 plus 1.0 leniency; see docs/PHYSICS.md).
+/// Reach rule of the server (docs/RE/placement.md, Player.canInteractWithBlock): a click on a block
+/// is accepted when the squared distance from the player's eye to the nearest point of that
+/// block's unit box is < (range + 1.0)^2, range 4.5 in survival and 5.0 in creative, so the hard
+/// limit is 5.5 (survival) / 6.0 (creative). Failing is silent, so the bot keeps a margin and
+/// works with 5.0 for the CLICKED block, which holds in both game modes.
 pub const CLICK_REACH: f64 = 5.0;
+
+/// Reach used when choosing where to stand for a block that is to be placed: the block it will
+/// be clicked against touches it, so the target's own box must be about one block closer.
+pub const REACH: f64 = 4.5;
+
+/// Whether the eye is close enough to the *target* block's box to place it (the clicked
+/// neighbour is then within [`CLICK_REACH`]; the slicer re-checks the real click support).
+pub fn within_reach(feet: Vec3, block: BlockPos) -> bool {
+    eye_to_box(feet, block) <= REACH
+}
 
 /// Distance from the eye of a player standing at `feet` to the nearest point of the block's box.
 pub fn eye_to_box(feet: Vec3, block: BlockPos) -> f64 {

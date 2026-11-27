@@ -10,6 +10,7 @@ use crate::builder::PlayClient;
 use crate::nav::feet_cell;
 use crate::world::{eye_to_box, within_reach, BlockPos, Face, CLICK_REACH};
 use std::collections::{HashMap, VecDeque};
+use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -235,11 +236,17 @@ impl Site {
     pub fn finish(&mut self, bot: &mut impl Mover) -> io::Result<usize> {
         while let Some(i) = self.pillars.len().checked_sub(1) {
             if !self.remove_pillar(bot, i)? {
+                if std::env::var("BUILDBOT_DEBUG").is_ok() {
+                    eprintln!("cannot remove pillar {:?} from {:?}", self.pillars[i], feet_cell(bot.feet()));
+                }
                 break;
             }
         }
         while let Some(&c) = self.bridges.last() {
             if !self.remove_bridge(bot, c)? {
+                if std::env::var("BUILDBOT_DEBUG").is_ok() {
+                    eprintln!("cannot remove bridge floor {c:?} from {:?}", feet_cell(bot.feet()));
+                }
                 break;
             }
         }
@@ -247,24 +254,25 @@ impl Site {
     }
 
     /// Walk a route, counting steps and time. Stepping off a pillar takes it down right away,
-    /// while it is still within reach.
+    /// and bridge floors are broken behind us (never one the rest of the route still needs).
     fn walk(&mut self, bot: &mut impl Mover, route: &[Cell]) -> io::Result<()> {
         self.timing.routes += 1;
         self.timing.steps += route.len().saturating_sub(1) as u32;
         let off_pillar = route.first().is_some_and(|c| self.pillars.iter().any(|p| p.top() == *c));
-        let (head, tail) = if off_pillar && route.len() > 2 { route.split_at(2) } else { (route, &route[..0]) };
-        let t = Instant::now();
-        bot.walk_cells(head)?;
-        self.timing.walk += t.elapsed();
-        if off_pillar {
-            self.sweep_nearby(bot)?;
-        }
-        if !tail.is_empty() {
-            let mut rest = vec![*head.last().unwrap()];
-            rest.extend_from_slice(tail);
+        for (k, pair) in route.windows(2).enumerate() {
             let t = Instant::now();
-            bot.walk_cells(&rest)?;
+            bot.walk_cells(pair)?;
             self.timing.walk += t.elapsed();
+            if bot.kicked() {
+                break;
+            }
+            if k == 0 && off_pillar {
+                self.sweep_nearby(bot)?;
+            }
+            if !self.bridges.is_empty() {
+                let ahead: HashSet<Cell> = route[k + 1..].iter().map(|c| (c.0, c.1 - 1, c.2)).collect();
+                self.sweep_bridges(bot, &ahead)?;
+            }
         }
         Ok(())
     }
@@ -298,7 +306,7 @@ impl Site {
             return Ok(());
         }
         self.sweep_nearby(bot)?;
-        self.sweep_bridges(bot)?;
+        self.sweep_bridges(bot, &HashSet::new())?;
         let start = feet_cell(bot.feet());
         let t = Instant::now();
         let route = self.terrain.route_for_run(start, upcoming, 24, 40_000);
@@ -371,14 +379,14 @@ impl Site {
     }
 
     /// Break bridge floors within reach that the bot is not standing on.
-    fn sweep_bridges(&mut self, bot: &mut impl Mover) -> io::Result<()> {
+    fn sweep_bridges(&mut self, bot: &mut impl Mover, protect: &HashSet<Cell>) -> io::Result<()> {
         let feet = bot.feet();
         let here = feet_cell(feet);
         let mut keep = Vec::new();
         for c in std::mem::take(&mut self.bridges) {
             let target = BlockPos::new(c.0, c.1, c.2);
             let under_us = here.0 == c.0 && here.2 == c.2 && here.1 > c.1;
-            if !under_us && eye_to_box(feet, target) <= CLICK_REACH {
+            if !under_us && !protect.contains(&c) && eye_to_box(feet, target) <= CLICK_REACH {
                 bot.break_block(target)?;
                 self.terrain.remove_block(c);
             } else {
@@ -438,7 +446,7 @@ mod tests {
         let target = BlockPos::new(5, 7, 0);
         assert!(t.route_for_run((0, 0, 0), &[target], 24, 20_000).is_none(), "out of reach on foot");
         let (route, pillar) = plan_pillar(&t, (0, 0, 0), &[target], 24, 20_000).expect("pillar");
-        assert!(pillar.height >= 2 && pillar.height <= MAX_HEIGHT);
+        assert!(pillar.height >= 1 && pillar.height <= MAX_HEIGHT);
         assert!(t.can_stand(pillar.base), "base is standable ground");
         assert_eq!(*route.last().unwrap(), pillar.base);
         assert!(within_reach(cell_feet(pillar.top()), target));

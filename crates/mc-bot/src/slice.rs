@@ -152,9 +152,15 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
             unreachable.push((world, format!("{}/out_of_reach", b.name)));
             continue;
         }
-        let mut pl = pl;
+        // Click only against blocks that are really within the server's click reach (docs/RE/placement.md).
+        let feet_now = rec.feet;
+        let near = |p: BlockPos| solid(p) && crate::world::eye_to_box(feet_now, p) <= crate::world::CLICK_REACH;
+        let mut pl = match placement::plan(&Block { pos: world, ..(*b).clone() }, near) {
+            Action::Place(p) => p,
+            Action::Skip(_) => pl,
+        };
         let mut chain: Vec<support::Link> = Vec::new();
-        if pl.clicks.iter().any(|c| !solid(c.support) && c.support != world) {
+        if pl.clicks.iter().any(|c| !near(c.support) && c.support != world) {
             let cellp = |p: BlockPos| (p.x, p.y, p.z);
             let can_click = |p: BlockPos| site.terrain.solid(cellp(p));
             let blocked = |p: BlockPos| blocks_cell(here, p);
@@ -166,7 +172,7 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
                 }
             }
             let cells: HashSet<BlockPos> = chain.iter().map(|l| l.pos).collect();
-            let with_chain = |p: BlockPos| solid(p) || cells.contains(&p);
+            let with_chain = |p: BlockPos| near(p) || cells.contains(&p);
             match placement::plan(&Block { pos: world, ..(*b).clone() }, with_chain) {
                 Action::Place(p2) if p2.clicks.iter().all(|c| with_chain(c.support) || c.support == world) => pl = p2,
                 _ => {
