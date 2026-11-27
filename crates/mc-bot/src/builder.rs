@@ -323,6 +323,67 @@ impl PlayClient {
         Ok(())
     }
 
+    /// Pillar jumping: jump, place a block under our own feet, land on it; `height` times.
+    /// `item_id` is the scaffold block. The bot starts and ends on the ground it stands on.
+    pub fn pillar_up(&mut self, base: Cell, height: i32, item_id: i32) -> io::Result<()> {
+        self.set_creative_held(item_id)?;
+        for k in 0..height {
+            let y = base.1 + k;
+            let floor = BlockPos::new(base.0, y - 1, base.2);
+            for rise in JUMP_ARC {
+                self.feet.y = y as f64 + rise;
+                self.send_pos(false)?;
+                self.tick()?;
+            }
+            // Feet are now above the cell to fill: click the top face of the block below it.
+            self.pitch = 90.0;
+            self.send_pos_look(false)?;
+            self.use_item_on(floor, Face::Up, (0.5, 1.0, 0.5))?;
+            self.idle(self.place_delay)?;
+            self.feet.y = (y + 1) as f64;
+            self.send_pos_look(true)?;
+            self.tick()?;
+            if self.kicked.is_some() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Break one block (creative mode: instantly) at `pos`.
+    fn dig(&mut self, pos: BlockPos) -> io::Result<()> {
+        self.seq += 1;
+        let mut b = PacketBuf::new();
+        b.write_varint(0); // status: started digging
+        b.write_position(pos.x, pos.y, pos.z);
+        b.write_u8(Face::Up as u8);
+        b.write_varint(self.seq);
+        self.conn.send(ids::SB_PLAY_BLOCK_DIG, b.as_slice())?;
+        let mut s = PacketBuf::new();
+        s.write_varint(0);
+        self.conn.send(ids::SB_PLAY_SWING_ARM, s.as_slice())
+    }
+
+    /// Take a pillar down from the top: dig the block under our feet, drop onto the next one.
+    pub fn pillar_down(&mut self, base: Cell, height: i32) -> io::Result<()> {
+        for k in (0..height).rev() {
+            self.dig(BlockPos::new(base.0, base.1 + k, base.2))?;
+            self.idle(self.place_delay)?;
+            let landing = base.1 as f64 + k as f64;
+            while self.feet.y > landing + 1e-9 && self.kicked.is_none() {
+                self.feet.y = (self.feet.y - FALL_STEP).max(landing);
+                self.send_pos(false)?;
+                self.tick()?;
+            }
+            self.send_pos(true)?;
+            self.tick()?;
+            if self.kicked.is_some() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     fn set_creative_held(&mut self, item_id: i32) -> io::Result<()> {
         if self.held_item == item_id {
             return Ok(());

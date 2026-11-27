@@ -13,6 +13,7 @@ pub mod path;
 pub mod placement;
 pub mod progress;
 pub mod proto;
+pub mod scaffold;
 pub mod schem;
 pub mod schematic;
 pub mod version;
