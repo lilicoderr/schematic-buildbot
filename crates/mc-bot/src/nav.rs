@@ -2,8 +2,9 @@
 //!
 //! The bot only ever stands on something solid. It walks, jumps up one block, or drops a few
 //! blocks, exactly like a player on foot, so it can climb onto floors it has just built.
-//! Cells the finished blueprint will occupy are off limits for standing: a block placed into the
-//! bot's own cell would be rejected (or shove the bot).
+//! Cells that already hold a block are never stood in. Cells the blueprint will fill later may be
+//! stood in (that is how a floor is laid from above), but a block is never placed into the bot's
+//! own feet or head cell ([`blocks_cell`]): the bot steps aside first.
 
 use crate::world::{within_reach, BlockPos, Vec3};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -55,7 +56,7 @@ impl Terrain {
         self.support.remove(&c);
     }
 
-    fn solid(&self, c: Cell) -> bool {
+    pub(crate) fn solid(&self, c: Cell) -> bool {
         c.1 < self.ground_y || self.body.contains(&c)
     }
 
@@ -128,6 +129,84 @@ impl Terrain {
     }
 }
 
+/// How many upcoming blocks (in build order) can be placed from `c` without moving.
+pub fn run_from(c: Cell, upcoming: &[BlockPos]) -> usize {
+    let feet = cell_feet(c);
+    upcoming.iter().take_while(|p| within_reach(feet, **p) && !blocks_cell(c, **p)).count()
+}
+
+/// A block placed at `p` would land inside the body of a player whose feet are in `c`.
+pub fn blocks_cell(c: Cell, p: BlockPos) -> bool {
+    p.x == c.0 && p.z == c.2 && (p.y == c.1 || p.y == c.1 + 1)
+}
+
+impl Terrain {
+    /// How many cells a walk from `start` can reach (diagnostics and tests).
+    pub fn reachable_count(&self, start: Cell, radius: i32, max_nodes: usize) -> usize {
+        let mut seen: HashSet<Cell> = HashSet::from([start]);
+        let mut queue = VecDeque::from([start]);
+        while let Some(cur) = queue.pop_front() {
+            if seen.len() > max_nodes {
+                break;
+            }
+            for next in self.steps_from(cur) {
+                let far = (next.0 - start.0).abs().max((next.2 - start.2).abs()) > radius;
+                if !far && seen.insert(next) {
+                    queue.push_back(next);
+                }
+            }
+        }
+        seen.len()
+    }
+
+    /// Route to a standing cell that reaches `upcoming[0]` and, among the cells found a few steps
+    /// beyond the nearest one, serves the longest run of following blocks without moving again.
+    /// Walking costs far more time than placing, so a slightly longer walk to a better spot wins.
+    pub fn route_for_run(&self, start: Cell, upcoming: &[BlockPos], radius: i32, max_nodes: usize) -> Option<Vec<Cell>> {
+        const SLACK: u32 = 4;
+        const STEP_COST: i64 = 1;
+        let first = *upcoming.first()?;
+        let mut came: HashMap<Cell, (Cell, u32)> = HashMap::from([(start, (start, 0))]);
+        let mut queue = VecDeque::from([start]);
+        let mut best: Option<(i64, Cell)> = None;
+        let mut limit = u32::MAX;
+        while let Some(cur) = queue.pop_front() {
+            let depth = came[&cur].1;
+            if depth > limit {
+                break;
+            }
+            if self.can_stand(cur) && within_reach(cell_feet(cur), first) && !blocks_cell(cur, first) {
+                if limit == u32::MAX {
+                    limit = depth + SLACK;
+                }
+                let score = 2 * run_from(cur, upcoming) as i64 - STEP_COST * (depth - (limit - SLACK)) as i64;
+                if best.is_none_or(|(b, _)| score > b) {
+                    best = Some((score, cur));
+                }
+            }
+            if came.len() > max_nodes {
+                break;
+            }
+            for next in self.steps_from(cur) {
+                let far = (next.0 - start.0).abs().max((next.2 - start.2).abs()) > radius;
+                if !far && !came.contains_key(&next) {
+                    came.insert(next, (cur, depth + 1));
+                    queue.push_back(next);
+                }
+            }
+        }
+        let (_, goal) = best?;
+        let mut path = vec![goal];
+        let mut at = goal;
+        while at != start {
+            at = came[&at].0;
+            path.push(at);
+        }
+        path.reverse();
+        Some(path)
+    }
+}
+
 /// Where the feet of a player standing in `c` are (cell centre, surface height).
 pub fn cell_feet(c: Cell) -> Vec3 {
     Vec3::new(c.0 as f64 + 0.5, c.1 as f64, c.2 as f64 + 0.5)
@@ -140,7 +219,7 @@ pub fn feet_cell(p: Vec3) -> Cell {
 
 /// Goal predicate: a standable cell from which `target` is within placement reach.
 pub fn reaches<'a>(t: &'a Terrain, target: BlockPos) -> impl Fn(Cell) -> bool + 'a {
-    move |c| t.can_stand(c) && within_reach(cell_feet(c), target)
+    move |c| t.can_stand(c) && within_reach(cell_feet(c), target) && !blocks_cell(c, target)
 }
 
 #[cfg(test)]
@@ -149,6 +228,45 @@ mod tests {
 
     fn flat() -> Terrain {
         Terrain::new(0, HashSet::new())
+    }
+
+    #[test]
+    fn run_route_stands_where_many_upcoming_blocks_are_in_reach() {
+        let t = flat();
+        // a row of blocks along x = 0..20 at y 0: the first is reachable from many cells, but only
+        // standing a bit further along serves the whole run.
+        let row: Vec<BlockPos> = (0..8).map(|x| BlockPos::new(x, 0, 3)).collect();
+        let near = t.route((-10, 0, 0), &nav_goal(&t, row[0]), 30, 5000).unwrap();
+        let smart = t.route_for_run((-10, 0, 0), &row, 30, 5000).unwrap();
+        let end = *smart.last().unwrap();
+        assert!(t.can_stand(end));
+        assert!(run_from(end, &row) >= run_from(*near.last().unwrap(), &row));
+        assert!(run_from(end, &row) > run_from(*near.last().unwrap(), &row), "lookahead should beat nearest");
+    }
+
+    fn nav_goal<'a>(t: &'a Terrain, p: BlockPos) -> impl Fn(Cell) -> bool + 'a {
+        reaches(t, p)
+    }
+
+    #[test]
+    fn every_planned_standing_position_has_solid_support_below() {
+        // A stepped pyramid of standable blocks plus a bars column that must not carry anyone.
+        let mut t = flat();
+        for (x, z, h) in [(2, 0, 1), (3, 0, 2), (4, 0, 3), (3, 1, 1), (4, 1, 2)] {
+            for y in 0..h {
+                t.add_block((x, y, z), true);
+            }
+        }
+        t.add_block((1, 0, 0), false);
+        let row: Vec<BlockPos> = vec![BlockPos::new(5, 3, 0), BlockPos::new(5, 3, 1), BlockPos::new(6, 3, 1)];
+        for start in [(0, 0, 0), (6, 0, 3), (-3, 0, -2)] {
+            let route = t.route_for_run(start, &row, 24, 20_000).expect("reachable");
+            for c in route.iter().skip(1) {
+                assert!(t.can_stand(*c), "{c:?} not standable");
+                assert!(t.carries((c.0, c.1 - 1, c.2)), "no support under {c:?}");
+            }
+        }
+        assert!(!t.can_stand((1, 1, 0)), "bars do not carry the player");
     }
 
     #[test]
