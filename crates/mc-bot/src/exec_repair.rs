@@ -51,12 +51,8 @@ pub fn repair(bot: &mut PlayClient, world: &World, sent: &Sent, off: Offset, say
     if todo.is_empty() {
         return Ok(0);
     }
-    let mut terrain = Terrain::new(world.ground_y + off.dy, HashSet::new());
-    for (c, s) in &world.blocks {
-        let (name, props) = crate::schematic::split_state(s);
-        let standable = crate::nav::is_standable_surface(&name, props.get("type").map(String::as_str));
-        terrain.add_block(off.cell(*c), standable);
-    }
+    let mut terrain = terrain_of(world, off);
+    terrain.sky_top = world.blocks.keys().map(|c| c.1 + off.dy).max().unwrap_or(0) + 2;
     let mut site = Site::new(terrain);
     let plan_feet = off.cell(world.feet);
     for p in &todo {
@@ -73,14 +69,36 @@ pub fn repair(bot: &mut PlayClient, world: &World, sent: &Sent, off: Offset, say
     site.finish(bot)?;
     bot.idle(std::time::Duration::from_millis(300))?;
     // back to where the plan expects us
-    let here = feet_cell(bot.feet);
-    if here != plan_feet {
-        match site.terrain.route(here, &|c| c == plan_feet, 60, 200_000) {
-            Some(route) => bot.walk_cells(&route)?,
-            None => say("repair: no ground route back to the planned position"),
-        }
+    if feet_cell(bot.feet) != plan_feet {
+        return_to(bot, world, off, say)?;
     }
     Ok(todo.len())
+}
+
+/// Walk (ground only) to the feet cell the plan expects, over the blocks built so far.
+pub fn return_to(bot: &mut PlayClient, world: &World, off: Offset, say: &mut dyn FnMut(&str)) -> io::Result<()> {
+    let goal = off.cell(world.feet);
+    let here = feet_cell(bot.feet);
+    if here == goal {
+        return Ok(());
+    }
+    match terrain_of(world, off).route(here, &|c| c == goal, 120, 400_000) {
+        Some(route) => bot.walk_cells(&route),
+        None => {
+            say("no ground route back to the planned position");
+            Ok(())
+        }
+    }
+}
+
+fn terrain_of(world: &World, off: Offset) -> Terrain {
+    let mut terrain = Terrain::new(world.ground_y + off.dy, HashSet::new());
+    for (c, s) in &world.blocks {
+        let (name, props) = crate::schematic::split_state(s);
+        let standable = crate::nav::is_standable_surface(&name, props.get("type").map(String::as_str));
+        terrain.add_block(off.cell(*c), standable);
+    }
+    terrain
 }
 
 #[cfg(test)]

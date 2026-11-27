@@ -39,6 +39,10 @@ pub struct Report {
 
 pub struct Opts {
     pub verify: bool,
+    /// Resume: steps before this index are assumed done in an earlier run.
+    pub from_step: usize,
+    /// Plan-to-world translation of the run being resumed (otherwise taken from where we stand).
+    pub offset: Option<Offset>,
 }
 
 /// What a placement step needs to be repeated later: item id and click plan (world coordinates).
@@ -52,8 +56,14 @@ fn to_placement(clicks: &[crate::plan::ClickStep], yaw: Option<f32>, off: Offset
     }
 }
 
-pub fn run(bot: &mut PlayClient, plan: &Plan, opts: &Opts, say: &mut dyn FnMut(&str)) -> io::Result<Report> {
-    let off = Offset::between(plan.header.start, feet_cell(bot.feet));
+pub fn run(
+    bot: &mut PlayClient,
+    plan: &Plan,
+    opts: &Opts,
+    say: &mut dyn FnMut(&str),
+    on_step: &mut dyn FnMut(usize, Offset),
+) -> io::Result<Report> {
+    let off = opts.offset.unwrap_or_else(|| Offset::between(plan.header.start, feet_cell(bot.feet)));
     let mut world = World::new(plan.header.origin.1, plan.header.start);
     let mut sent: Sent = HashMap::new();
     let mut rep = Report::default();
@@ -61,7 +71,18 @@ pub fn run(bot: &mut PlayClient, plan: &Plan, opts: &Opts, say: &mut dyn FnMut(&
     let (mut window_start, mut window_n) = (Instant::now(), 0usize);
     let scaffold_item = blocks::item_id("cobblestone").unwrap_or(1);
 
-    for (i, st) in plan.steps.iter().enumerate() {
+    let first = opts.from_step.min(plan.steps.len());
+    for (i, st) in plan.steps[..first].iter().enumerate() {
+        sim::apply(&mut world, st).map_err(|m| io::Error::other(format!("step {}: {m}", i + 1)))?;
+    }
+    if first > 0 {
+        rep.steps_done = first;
+        exec_repair::return_to(bot, &world, off, say)?;
+    }
+    // level moves collected so the bot walks them in one go
+    let mut level: Vec<Cell> = Vec::new();
+
+    for (i, st) in plan.steps.iter().enumerate().skip(first) {
         if bot.kicked.is_some() {
             rep.kicked = bot.kicked.clone();
             break;
@@ -82,7 +103,17 @@ pub fn run(bot: &mut PlayClient, plan: &Plan, opts: &Opts, say: &mut dyn FnMut(&
         };
         let t_step = Instant::now();
         match st {
-            Step::Move(c) => bot.walk_cells(&[off.cell(before), off.cell(*c)])?,
+            Step::Move(c) => {
+                if c.1 == before.1 {
+                    level.push(off.cell(*c));
+                    let more = matches!(plan.steps.get(i + 1), Some(Step::Move(n)) if n.1 == c.1);
+                    if !more {
+                        bot.walk_level(&std::mem::take(&mut level))?;
+                    }
+                } else {
+                    bot.walk_cells(&[off.cell(before), off.cell(*c)])?;
+                }
+            }
             Step::Pillar(c) => bot.pillar_up(off.cell(*c), 1, scaffold_item)?,
             Step::Support { pos, clicks } => {
                 let c = &clicks[0];
@@ -123,6 +154,9 @@ pub fn run(bot: &mut PlayClient, plan: &Plan, opts: &Opts, say: &mut dyn FnMut(&
         rep.spent[kind] += t_step.elapsed().as_secs_f64();
         rep.counts[kind] += 1;
         rep.steps_done = i + 1;
+        if level.is_empty() {
+            on_step(i + 1, off);
+        }
     }
     bot.idle(Duration::from_millis(500))?;
     if opts.verify && rep.aborted.is_none() && bot.kicked.is_none() {

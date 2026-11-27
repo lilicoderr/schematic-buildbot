@@ -47,6 +47,7 @@ pub const SB_PLAY_HELD_ITEM: i32 = 0x2F; // Set Held Item
 pub const SB_PLAY_CLICK_CONTAINER: i32 = 0x0E;
 pub const SB_PLAY_CLOSE_CONTAINER: i32 = 0x0F;
 pub const SB_PLAY_SET_CREATIVE_SLOT: i32 = 0x32;
+pub const SB_PLAY_PLAYER_COMMAND: i32 = 0x25;
 pub const SB_PLAY_BLOCK_DIG: i32 = 0x24;
 pub const SB_PLAY_USE_ITEM: i32 = 0x39;
 

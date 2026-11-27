@@ -9,6 +9,7 @@
 
 use crate::blocklog::{self, BlockLog};
 use crate::ids;
+use crate::motion::{self, SPRINT_STEP, WALK_STEP};
 use crate::nav::{cell_feet, Cell};
 use crate::net::Connection;
 use crate::placement::Plan;
@@ -19,8 +20,6 @@ use mc_proto::buf::PacketBuf;
 use std::io;
 use std::time::{Duration, Instant};
 
-/// Ground speed per 20 Hz tick: 4.2 blocks/s, just under vanilla walking speed (4.317).
-const WALK_STEP: f64 = 0.21;
 /// Feet height above the take-off surface on ticks 1..=3 of a vanilla jump (0.42 initial velocity).
 const JUMP_ARC: [f64; 3] = [0.42, 0.7532, 1.0013];
 /// Fall distance per tick while dropping off an edge.
@@ -73,6 +72,10 @@ pub struct PlayClient {
     /// Teleports forced by the server (a sign we are pushing into something).
     pub teleports: u32,
     next_tick: Instant,
+    /// Entity id from the login packet (needed by player_command).
+    entity_id: i32,
+    /// Ground distance per tick for level walking: walking, or sprinting after [`PlayClient::set_sprint`].
+    stride: f64,
 }
 
 impl PlayClient {
@@ -95,6 +98,8 @@ impl PlayClient {
             blocks: BlockLog::default(),
             teleports: 0,
             next_tick: Instant::now(),
+            entity_id: 0,
+            stride: WALK_STEP,
         };
         client.conn.set_read_timeout(Some(Duration::from_millis(5)))?;
         // Pump packets until the first teleport sync fixes our position
@@ -113,6 +118,9 @@ impl PlayClient {
         match self.conn.recv() {
             Ok((id, mut body)) => {
                 match id {
+                    ids::CB_PLAY_LOGIN => {
+                        self.entity_id = body.read_i32().unwrap_or(0);
+                    }
                     ids::CB_PLAY_KEEPALIVE => {
                         let k = body.read_i64().unwrap_or(0);
                         let mut r = PacketBuf::new();
@@ -272,6 +280,33 @@ impl PlayClient {
         self.send_pos(true)?;
         self.idle(Duration::from_millis(100))?;
         Ok(start_y - self.feet.y)
+    }
+
+    /// Sprint (or walk again). Tells the server, like the vanilla client, and changes the stride.
+    pub fn set_sprint(&mut self, on: bool) -> io::Result<()> {
+        let mut b = PacketBuf::new();
+        b.write_varint(self.entity_id);
+        b.write_varint(if on { 3 } else { 4 }); // start / stop sprinting (docs/RE/protocol.md)
+        b.write_varint(0);
+        self.conn.send(ids::SB_PLAY_PLAYER_COMMAND, b.as_slice())?;
+        self.stride = if on { SPRINT_STEP } else { WALK_STEP };
+        Ok(())
+    }
+
+    /// Walk along level cell centres without stopping at each one.
+    pub fn walk_level(&mut self, cells: &[Cell]) -> io::Result<()> {
+        let path: Vec<Vec3> = cells.iter().map(|&c| cell_feet(c)).collect();
+        let mut next = 0;
+        let limit = 40 + path.len() * 8;
+        for _ in 0..limit {
+            if next >= path.len() || self.kicked.is_some() {
+                break;
+            }
+            self.feet = motion::advance(self.feet, &path, &mut next, self.stride);
+            self.send_pos(true)?;
+            self.tick()?;
+        }
+        Ok(())
     }
 
     /// Follow a route of feet cells: walk on the level, jump up one block, drop down a few.

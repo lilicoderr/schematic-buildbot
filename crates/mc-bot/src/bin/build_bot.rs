@@ -7,6 +7,8 @@
 
 #[path = "build_bot/plan_cmds.rs"]
 mod plan_cmds;
+#[path = "build_bot/run_cmd.rs"]
+mod run_cmd;
 
 use mc_bot::builder::PlayClient;
 use mc_bot::nav::{self, Terrain};
@@ -144,7 +146,7 @@ fn main() {
         match cmd {
             "slice" => return plan_cmds::slice_cmd(rest),
             "simulate" => return plan_cmds::simulate_cmd(rest),
-            "run" => return plan_cmds::run_cmd(rest),
+            "run" => return run_cmd::run_cmd(rest),
             _ => {}
         }
     }
