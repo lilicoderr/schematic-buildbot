@@ -26,3 +26,10 @@ jobs:
         run: |
           python tools/preview.py blueprints/cottage.txt -o /tmp/cottage.png
           python tools/preview.py crates/mc-bot/tests/fixtures/sample.schem -o /tmp/sample.png
+      - name: Factory generator is reproducible and parses
+        run: |
+          python tools/gen_factory.py --size small -o /tmp/factory-small.schem
+          cmp /tmp/factory-small.schem blueprints/factory-small.schem
+          python tools/gen_factory.py --size large -o /tmp/factory-large.schem
+          cmp /tmp/factory-large.schem blueprints/factory-large.schem
+          cargo run -q --bin build-bot -- x x blueprints/factory-large.schem --dry-run | head -3
