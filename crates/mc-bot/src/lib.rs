@@ -24,6 +24,8 @@ pub mod run_state;
 pub mod scaffold;
 pub mod schem;
 pub mod sim;
+pub mod state_ids;
+pub mod state_table;
 pub mod slice;
 pub mod slice_stats;
 pub mod support;
