@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan preview</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #181c26; color: #e6e9f0; font: 13px system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #view { flex: 1; position: relative; min-width: 0; }
+  #view canvas { display: block; }
+  #badge { position: absolute; left: 12px; top: 10px; background: #000a; border: 1px solid #ffd34d; color: #ffd34d; padding: 5px 10px; font-weight: 700; }
+  aside { width: 270px; padding: 12px 16px; background: #222736; overflow: auto; }
+  aside h3 { margin: 9px 0 4px; font-size: 12px; color: #9aa4bd; text-transform: uppercase; }
+  td:first-child { color: #9aa4bd; padding-right: 12px; }
+  code { display: block; word-break: break-all; background: #151924; padding: 6px; min-height: 48px; }
+  i { display: inline-block; width: 11px; height: 11px; margin-right: 6px; }
+  footer { padding: 8px 14px; background: #10131b; display: grid; grid-template-columns: auto 1fr 90px; gap: 6px 10px; align-items: center; }
+</style>
+<script type="importmap">{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head><body>
+<main>
+  <div id="view"><div id="badge">PLAN PREVIEW &middot; offline, not in-game</div></div>
+  <aside>
+    <input type="file" id="file" accept=".bbplan">
+    <label><br><input type="checkbox" id="only"> show only the selected layer</label>
+    <h3>Progress at this step</h3><table id="live"></table>
+    <h3>Current step</h3><code id="cur"></code>
+    <h3>Plan header stats</h3><table id="stats"></table>
+    <h3>Legend</h3>
+    <div><i style="background:#ff7a1a"></i>temporary support (SUPPORT)</div>
+    <div><i style="background:#ffe14d"></i>temporary scaffold pillar (PILLAR)</div>
+    <div><i style="background:#35e0ff"></i>bot and recent path</div>
+    <div><i style="background:#ff3df0"></i>cell of the current step</div>
+    <div>temporary blocks have a white outline and show through walls</div>
+    <p>Block colours are flat approximations; block shapes are drawn as cubes.</p>
+  </aside>
+</main>
+<footer>
+  <button id="play">Play</button><input type="range" id="step" min="0"><span id="stepv"></span>
+  <span>Layer</span><input type="range" id="layer" min="0"><span id="layerv"></span>
+</footer>
+<script>/*PLAN_JS*/</script>
+<script>window.EMBED = /*EMBED*/null</script>
+<script type="module">/*VIEWER_JS*/</script>
+</body></html>
