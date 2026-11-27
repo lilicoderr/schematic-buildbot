@@ -18,6 +18,8 @@ pub mod proto;
 pub mod scaffold;
 pub mod schem;
 pub mod sim;
+pub mod slice;
+pub mod slice_stats;
 pub mod schematic;
 pub mod version;
 pub mod world;

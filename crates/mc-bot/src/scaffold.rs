@@ -97,6 +97,39 @@ fn column_free(t: &Terrain, p: &Pillar) -> bool {
     (y..=y + p.height + 1).all(|yy| !t.solid((x, yy, z)))
 }
 
+/// What the planner needs from whatever moves the player: the live client, or a recorder that
+/// writes plan steps instead (see `slice`).
+pub trait Mover {
+    fn feet(&self) -> crate::world::Vec3;
+    fn kicked(&self) -> bool;
+    fn walk_cells(&mut self, route: &[Cell]) -> io::Result<()>;
+    fn pillar_up(&mut self, base: Cell, height: i32, item_id: i32) -> io::Result<()>;
+    fn pillar_down(&mut self, base: Cell, height: i32) -> io::Result<()>;
+    /// Break one scaffold block that is within reach.
+    fn break_block(&mut self, pos: BlockPos) -> io::Result<()>;
+}
+
+impl Mover for PlayClient {
+    fn feet(&self) -> crate::world::Vec3 {
+        self.feet
+    }
+    fn kicked(&self) -> bool {
+        self.kicked.is_some()
+    }
+    fn walk_cells(&mut self, route: &[Cell]) -> io::Result<()> {
+        PlayClient::walk_cells(self, route)
+    }
+    fn pillar_up(&mut self, base: Cell, height: i32, item_id: i32) -> io::Result<()> {
+        PlayClient::pillar_up(self, base, height, item_id)
+    }
+    fn pillar_down(&mut self, base: Cell, height: i32) -> io::Result<()> {
+        PlayClient::pillar_down(self, base, height)
+    }
+    fn break_block(&mut self, pos: BlockPos) -> io::Result<()> {
+        PlayClient::break_block(self, pos)
+    }
+}
+
 /// What the bot stands on and around while building: the terrain model plus the scaffold
 /// pillars still standing (removed lazily, from the top, when they are in the way or at the end).
 pub struct Site {
@@ -122,32 +155,76 @@ impl Site {
         Site { terrain, pillars: Vec::new(), timing: Timing::default() }
     }
 
-    /// Walk to the top of pillar `i`, dig it away, drop to its base. False if the top is unreachable.
-    fn remove_pillar(&mut self, bot: &mut PlayClient, i: usize) -> io::Result<bool> {
+    /// Take pillar `i` away. Standing on its top: dig down from the top. Otherwise walk to spots
+    /// that reach each block (top first, never from above it) and break it from there.
+    /// False if some block cannot be reached.
+    fn remove_pillar(&mut self, bot: &mut impl Mover, i: usize) -> io::Result<bool> {
         let p = self.pillars[i].clone();
-        let top = p.top();
-        if feet_cell(bot.feet) != top {
-            let route = self.terrain.route(feet_cell(bot.feet), &|c| c == top, 40, 60_000);
-            if let Some(route) = route {
-                self.walk(bot, &route)?;
+        let t = Instant::now();
+        if feet_cell(bot.feet()) == p.top() {
+            bot.pillar_down(p.base, p.height)?;
+        } else {
+            for c in p.cells().collect::<Vec<_>>().into_iter().rev() {
+                let target = BlockPos::new(c.0, c.1, c.2);
+                let ok = |g: Cell| !(g.0 == c.0 && g.2 == c.2) && within_reach(cell_feet(g), target);
+                let here = feet_cell(bot.feet());
+                if !ok(here) || !self.terrain.can_stand(here) {
+                    let goal = |g: Cell| self.terrain.can_stand(g) && ok(g);
+                    let Some(route) = self.terrain.route(here, &goal, 40, 60_000) else {
+                        if std::env::var("BUILDBOT_DEBUG").is_ok() {
+                            eprintln!("cannot reach pillar block {c:?} from {here:?} (pillar {p:?})");
+                        }
+                        return Ok(false);
+                    };
+                    self.walk(bot, &route)?;
+                }
+                bot.break_block(target)?;
+                self.terrain.remove_block(c);
             }
         }
-        if feet_cell(bot.feet) != top || bot.kicked.is_some() {
-            return Ok(false);
-        }
-        let t = Instant::now();
-        bot.pillar_down(p.base, p.height)?;
-        self.timing.pillar += t.elapsed();
-        self.timing.pillars_removed += 1;
         for c in p.cells() {
             self.terrain.remove_block(c);
         }
         self.pillars.remove(i);
+        self.timing.pillar += t.elapsed();
+        self.timing.pillars_removed += 1;
         Ok(true)
     }
 
+    /// Break, from where the bot stands, the top blocks of every pillar that are within reach
+    /// (never a pillar the bot stands over). Cheap, no walking; keeps pillars from being stranded.
+    fn sweep_nearby(&mut self, bot: &mut impl Mover) -> io::Result<()> {
+        let feet = bot.feet();
+        let here = feet_cell(feet);
+        let mut i = 0;
+        while i < self.pillars.len() {
+            if self.pillars[i].base.0 == here.0 && self.pillars[i].base.2 == here.2 {
+                i += 1;
+                continue;
+            }
+            while self.pillars[i].height > 0 {
+                let p = &self.pillars[i];
+                let c = (p.base.0, p.base.1 + p.height - 1, p.base.2);
+                let target = BlockPos::new(c.0, c.1, c.2);
+                if !within_reach(feet, target) {
+                    break;
+                }
+                bot.break_block(target)?;
+                self.terrain.remove_block(c);
+                self.pillars[i].height -= 1;
+            }
+            if self.pillars[i].height == 0 {
+                self.pillars.remove(i);
+                self.timing.pillars_removed += 1;
+            } else {
+                i += 1;
+            }
+        }
+        Ok(())
+    }
+
     /// Remove every remaining pillar. Returns how many could not be reached (left standing).
-    pub fn finish(&mut self, bot: &mut PlayClient) -> io::Result<usize> {
+    pub fn finish(&mut self, bot: &mut impl Mover) -> io::Result<usize> {
         while let Some(i) = self.pillars.len().checked_sub(1) {
             if !self.remove_pillar(bot, i)? {
                 break;
@@ -157,7 +234,7 @@ impl Site {
     }
 
     /// Walk a route, counting steps and time.
-    fn walk(&mut self, bot: &mut PlayClient, route: &[Cell]) -> io::Result<()> {
+    fn walk(&mut self, bot: &mut impl Mover, route: &[Cell]) -> io::Result<()> {
         let t = Instant::now();
         self.timing.routes += 1;
         self.timing.steps += route.len().saturating_sub(1) as u32;
@@ -170,15 +247,15 @@ impl Site {
         self.pillars.iter().position(|p| p.cells().any(|c| c == (t.x, t.y, t.z)))
     }
 
-    fn can_place_from_here(&self, bot: &PlayClient, target: BlockPos) -> bool {
-        within_reach(bot.feet, target) && !blocks_cell(feet_cell(bot.feet), target) && self.in_scaffold(target).is_none()
+    fn can_place_from_here(&self, bot: &impl Mover, target: BlockPos) -> bool {
+        within_reach(bot.feet(), target) && !blocks_cell(feet_cell(bot.feet()), target) && self.in_scaffold(target).is_none()
     }
 
     /// Get to a spot from which `upcoming[0]` can be placed: stay, walk (over built blocks, jumping
     /// up one, dropping down), or build a scaffold pillar (to reach it, or to climb out of a pit
     /// the walls enclosed). When nothing legal reaches the block the bot stays put and the caller
     /// counts it unreachable: it never flies or hovers.
-    pub fn approach(&mut self, bot: &mut PlayClient, upcoming: &[BlockPos]) -> io::Result<()> {
+    pub fn approach(&mut self, bot: &mut impl Mover, upcoming: &[BlockPos]) -> io::Result<()> {
         let first = upcoming[0];
         while let Some(i) = self.in_scaffold(first) {
             if !self.remove_pillar(bot, i)? {
@@ -188,9 +265,13 @@ impl Site {
         if self.can_place_from_here(bot, first) {
             return Ok(());
         }
-        let start = feet_cell(bot.feet);
-        if let Some(route) = self.terrain.route_for_run(start, upcoming, 24, 40_000) {
-            return bot.walk_cells(&route);
+        self.sweep_nearby(bot)?;
+        let start = feet_cell(bot.feet());
+        let t = Instant::now();
+        let route = self.terrain.route_for_run(start, upcoming, 24, 40_000);
+        self.timing.search += t.elapsed();
+        if let Some(route) = route {
+            return self.walk(bot, &route);
         }
         let Some(item) = blocks::item_id("cobblestone") else { return Ok(()) };
         // Standing on a pillar too tall to drop from: take it down, then look again.
@@ -206,7 +287,7 @@ impl Site {
             self.build(bot, pillar, item)?;
         } else if let Some(pillar) = self.plan_escape(start, upcoming) {
             self.build(bot, pillar, item)?;
-            let start = feet_cell(bot.feet);
+            let start = feet_cell(bot.feet());
             if let Some(route) = self.terrain.route_for_run(start, upcoming, 24, 40_000) {
                 self.walk(bot, &route)?;
             }
@@ -214,8 +295,8 @@ impl Site {
         Ok(())
     }
 
-    fn build(&mut self, bot: &mut PlayClient, pillar: Pillar, item: i32) -> io::Result<()> {
-        if bot.kicked.is_some() || feet_cell(bot.feet) != pillar.base {
+    fn build(&mut self, bot: &mut impl Mover, pillar: Pillar, item: i32) -> io::Result<()> {
+        if bot.kicked() || feet_cell(bot.feet()) != pillar.base {
             return Ok(());
         }
         let t = Instant::now();

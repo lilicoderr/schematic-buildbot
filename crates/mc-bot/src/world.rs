@@ -123,9 +123,30 @@ pub fn within_reach(feet: Vec3, block: BlockPos) -> bool {
     eye.dist(block.center()) <= REACH
 }
 
+/// Largest eye-to-block-box distance accepted for the *clicked* block (the server allows 5.5:
+/// block interaction range 4.5 plus 1.0 leniency; see docs/PHYSICS.md).
+pub const CLICK_REACH: f64 = 5.0;
+
+/// Distance from the eye of a player standing at `feet` to the nearest point of the block's box.
+pub fn eye_to_box(feet: Vec3, block: BlockPos) -> f64 {
+    let eye = Vec3::new(feet.x, feet.y + EYE_HEIGHT, feet.z);
+    let d = |e: f64, lo: i32| (lo as f64 - e).max(e - (lo as f64 + 1.0)).max(0.0);
+    let (dx, dy, dz) = (d(eye.x, block.x), d(eye.y, block.y), d(eye.z, block.z));
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn box_distance_is_at_most_center_distance_minus_half_a_block() {
+        let feet = Vec3::new(0.5, 0.0, 0.5);
+        for b in [BlockPos::new(3, 0, 0), BlockPos::new(-2, -3, 4), BlockPos::new(0, 3, 0)] {
+            let eye = Vec3::new(feet.x, feet.y + EYE_HEIGHT, feet.z);
+            assert!(eye_to_box(feet, b) <= eye.dist(b.center()) - 0.5 + 1e-9, "{b:?}");
+        }
+    }
 
     #[test]
     fn look_at_cardinals() {

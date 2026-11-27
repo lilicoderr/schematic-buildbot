@@ -5,6 +5,9 @@
 //! The bot walks on the ground (no flying, no speeding) and places supported blocks
 //! first. Works on creative-mode servers (it puts blocks in hand via set-creative-slot).
 
+#[path = "build_bot/plan_cmds.rs"]
+mod plan_cmds;
+
 use mc_bot::builder::PlayClient;
 use mc_bot::nav::{self, Terrain};
 use mc_bot::placement::{self, Action};
@@ -134,6 +137,16 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(cmd) = args.first().map(String::as_str) {
+        let rest = &args[1..];
+        let lang = rest.iter().position(|a| a == "--lang").and_then(|i| rest.get(i + 1)).cloned();
+        i18n::set(i18n::detect(lang.as_deref()));
+        match cmd {
+            "slice" => return plan_cmds::slice_cmd(rest),
+            "simulate" => return plan_cmds::simulate_cmd(rest),
+            _ => {}
+        }
+    }
     // Language first, so even option errors are localized.
     let lang_flag = args.iter().position(|a| a == "--lang").and_then(|i| args.get(i + 1)).cloned();
     i18n::set(i18n::detect(lang_flag.as_deref()));
@@ -180,7 +193,7 @@ fn main() {
 /// Load a blueprint from a local file or an http(s) URL. Format is picked by extension,
 /// falling back to sniffing: gzip NBT is a schematic, anything else is the text format.
 /// Paste a direct `.schem` link from a sharing site and it downloads and builds.
-fn load_schematic(src: &str) -> Result<Schematic, String> {
+pub(crate) fn load_schematic(src: &str) -> Result<Schematic, String> {
     let path_part = src.split(['?', '#']).next().unwrap_or(src);
     let name = path_part.rsplit(['/', '\\']).next().unwrap_or("blueprint").to_string();
     let bytes: Vec<u8> = if src.starts_with("http://") || src.starts_with("https://") {

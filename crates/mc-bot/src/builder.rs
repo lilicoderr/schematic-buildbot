@@ -370,6 +370,12 @@ impl PlayClient {
         self.conn.send(ids::SB_PLAY_SWING_ARM, s.as_slice())
     }
 
+    /// Break a scaffold block within reach and wait for the server to apply it.
+    pub fn break_block(&mut self, pos: BlockPos) -> io::Result<()> {
+        self.dig(pos)?;
+        self.idle(self.place_delay)
+    }
+
     /// Take a pillar down from the top: dig the block under our feet, drop onto the next one.
     pub fn pillar_down(&mut self, base: Cell, height: i32) -> io::Result<()> {
         for k in (0..height).rev() {

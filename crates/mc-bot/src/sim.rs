@@ -5,7 +5,7 @@
 use crate::nav::{blocks_cell, cell_feet, is_standable_surface, Cell};
 use crate::plan::{block_hash, Plan, Step};
 use crate::schematic::{split_state, Schematic};
-use crate::world::{within_reach, BlockPos, Face};
+use crate::world::{eye_to_box, within_reach, BlockPos, Face, CLICK_REACH};
 use std::collections::{HashMap, HashSet};
 
 pub const MAX_DROP: i32 = 3;
@@ -138,7 +138,7 @@ fn place(w: &mut World, pos: BlockPos, state: &str, clicks: &[crate::plan::Click
     }
     for c in clicks {
         click_ok(w, pos, c.support, c.face)?;
-        if !within_reach(cell_feet(w.feet), c.support) {
+        if eye_to_box(cell_feet(w.feet), c.support) > CLICK_REACH {
             return Err(format!("click support {:?} out of reach", c.support));
         }
     }
@@ -146,7 +146,7 @@ fn place(w: &mut World, pos: BlockPos, state: &str, clicks: &[crate::plan::Click
     Ok(())
 }
 
-fn step_once(w: &mut World, st: &Step, prev_placed: bool) -> Result<(), String> {
+fn step_once(w: &mut World, st: &Step) -> Result<(), String> {
     match st {
         Step::Move(to) => move_to(w, *to),
         Step::Pillar(c) => {
@@ -163,8 +163,12 @@ fn step_once(w: &mut World, st: &Step, prev_placed: bool) -> Result<(), String> 
         }
         Step::Place { pos, state, clicks, .. } => place(w, *pos, state, clicks),
         Step::Auto { pos, state } => {
-            if !prev_placed || w.solid(cell(*pos)) {
-                return Err("AUTO must follow a placement and land in a free cell".into());
+            let name = split_state(state).0;
+            let near = Face::HORIZONTAL.iter().chain([&Face::Up, &Face::Down]).any(|f| {
+                w.blocks.get(&cell(pos.offset(*f))).is_some_and(|s| split_state(s).0 == name)
+            });
+            if !near || w.solid(cell(*pos)) {
+                return Err("AUTO needs a free cell next to a placed block of the same kind".into());
             }
             w.blocks.insert(cell(*pos), state.clone());
             Ok(())
@@ -198,10 +202,8 @@ pub fn simulate(plan: &Plan, schem: &Schematic) -> Result<SimReport, SimError> {
         return Err(SimError { step: 0, msg: "start cell is not standable".into() });
     }
     let mut rep = SimReport::default();
-    let mut prev_placed = false;
     for (i, st) in plan.steps.iter().enumerate() {
-        step_once(&mut w, st, prev_placed).map_err(|msg| SimError { step: i, msg: format!("{st}: {msg}") })?;
-        prev_placed = matches!(st, Step::Place { .. } | Step::Auto { .. });
+        step_once(&mut w, st).map_err(|msg| SimError { step: i, msg: format!("{st}: {msg}") })?;
         match st {
             Step::Move(_) => rep.moves += 1,
             Step::Pillar(_) => rep.pillars += 1,
