@@ -6,6 +6,7 @@ pub mod builder;
 pub mod i18n;
 pub mod ids;
 pub mod litematic;
+pub mod nav;
 pub mod nbt;
 pub mod net;
 pub mod path;
