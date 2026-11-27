@@ -48,6 +48,41 @@ All blocks can be placed.
 block states: 18 blocks carry states; 18 will match exactly, 0 second-half blocks are placed automatically
 ```
 
+## Slice, simulate, run (plan pipeline)
+
+Like a 3D-printer slicer, the bot can compile a schematic offline into a deterministic plan and replay it:
+
+```text
+ schematic ──slice──▶ plan.bbplan ──simulate──▶ legal? ──run──▶ server
+ (.schem/.litematic)  (text steps:       (every step checked   (replay, confirm each
+                       MOVE PILLAR        in an in-memory       PLACE by block update,
+                       SUPPORT PLACE      world, final world    re-place misses at
+                       BREAK CHECKPOINT)  == schematic)         every CHECKPOINT)
+```
+
+```bash
+build-bot slice castle.schem -o castle.bbplan          # offline, no server; refuses plans that fail simulation
+build-bot simulate castle.bbplan castle.schem          # re-check every step
+build-bot run castle.bbplan 127.0.0.1:25566 --verify   # replay on a server
+```
+
+The plan format is in [docs/PLAN_FORMAT.md](docs/PLAN_FORMAT.md). The bot stays on the ground: high spots are reached by
+jumping up one block, by temporary scaffold pillars (jump, place under the feet, land) or scaffold bridges, and every scaffold
+block is broken again before the plan ends.
+
+Measured on a local vanilla 1.21.1 server (small factory, 2408 blocks): sliced in 0.3 s with 0 unreachable blocks,
+run in 748 s (3.2 blocks/s, faster at the start and slower where many scaffolds are needed), 2408/2408 placements confirmed
+by block updates, 0 re-placed, 0 kicks. The large 22k-block factory does not slice cleanly yet (see docs/PROGRESS.md).
+Neighbour-derived block states (stair shape, fence and pane connections) cannot be chosen by a client; the slicer counts them.
+
+## How the rules were derived
+
+The reach, placement, movement and packet rules are read from the official Minecraft 1.21.1 server (decompiled with the
+official Mojang mappings, tables from the server's own data generator) and written down in our own words in
+[docs/RE](docs/RE). No Mojang code or jars are distributed; `tools/re` holds the scripts that fetch and map them locally.
+Examples: a click is accepted when the eye is within 5.5 (survival) / 6.0 (creative) blocks of the clicked block's box, the
+bot must send a rotation packet before clicking, answer chunk batches and confirm each teleport exactly once.
+
 ## Features
 
 | Feature | Status |
