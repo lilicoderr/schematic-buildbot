@@ -21,6 +21,7 @@ pub mod job;
 pub mod json;
 pub mod ledger;
 pub mod litematic;
+pub mod materials;
 pub mod nav;
 pub mod navplan;
 pub mod motion;

@@ -3,7 +3,7 @@
 
 /// Name of the item that places `block` (wall variants use the standing item;
 /// docs/RE/placement.md 5.1).
-fn item_name(block: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn item_name(block: &str) -> std::borrow::Cow<'_, str> {
     match block {
         "redstone_wire" => "redstone".into(),
         "tripwire" => "string".into(),

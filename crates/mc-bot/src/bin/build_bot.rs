@@ -171,6 +171,7 @@ fn main() {
             "simulate" => return plan_cmds::simulate_cmd(rest),
             "run" => return run_cmd::run_cmd(rest),
             "ui" => return ui::ui_cmd(rest),
+            "materials" => return plan_cmds::materials_cmd(rest),
             _ => {}
         }
     }

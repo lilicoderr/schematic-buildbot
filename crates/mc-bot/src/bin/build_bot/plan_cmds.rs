@@ -97,3 +97,32 @@ pub fn simulate_cmd(args: &[String]) {
         Err(e) => fail(format!("step {}: {}", e.step + 1, e.msg)),
     }
 }
+
+/// `materials <schematic>`: items, stacks and shulker boxes the blueprint needs.
+pub fn materials_cmd(args: &[String]) {
+    let Some(src) = args.iter().find(|a| !a.starts_with("--") && args.iter().position(|b| b == *a).is_some_and(|i| i == 0 || args[i - 1] != "--lang")) else {
+        fail(tr!("usage: build-bot materials <schematic file or URL>", "사용법: build-bot materials <설계도 파일 또는 URL>"))
+    };
+    let schem = load(src);
+    let lines = mc_bot::materials::list(&schem);
+    let width = lines.iter().map(|l| l.item.len()).max().unwrap_or(4).max(4);
+    println!("{}", tr!("materials for '{}' ({} blocks)", "'{}' 재료 목록 ({}블록)", schem.name, schem.blocks.len()));
+    let head = tr!("count", "개수");
+    println!("{:<width$}  {:>8}  {:>7}  {}", tr!("item", "아이템"), head, tr!("stacks", "스택수"), tr!("per stack", "스택 구성"));
+    for l in &lines {
+        println!("{:<width$}  {:>8}  {:>7}  {}", l.item, l.count, l.stacks(), mc_bot::materials::stack_text(l));
+    }
+    let (slots, boxes) = mc_bot::materials::totals(&lines);
+    let missing: Vec<&str> = lines.iter().filter(|l| mc_bot::blocks::item_id(&l.item).is_none()).map(|l| l.item.as_str()).collect();
+    println!(
+        "{}",
+        tr!(
+            "total: {} items, {} stacks, {} shulker box(es) of {} slots",
+            "합계: 아이템 {}개, {}스택, 셜커 상자 {}개 ({}칸)",
+            lines.iter().map(|l| l.count).sum::<usize>(), slots, boxes, mc_bot::materials::SHULKER_SLOTS
+        )
+    );
+    if !missing.is_empty() {
+        println!("{}", tr!("no item in the default version for: {}", "기본 버전에 아이템이 없는 블록: {}", missing.join(", ")));
+    }
+}
