@@ -59,6 +59,16 @@ pub struct Opts {
     /// World positions that were occupied before the build and are not part of it; the repair
     /// leaves them alone.
     pub keep: HashSet<BlockPos>,
+    /// An undo: the blocks standing before the first step, in plan coordinates.
+    pub demolition: Option<Demolition>,
+}
+
+/// The world an undo plan starts from.
+#[derive(Debug, Clone, Default)]
+pub struct Demolition {
+    pub blocks: std::collections::HashMap<Cell, String>,
+    /// The cells of `blocks` the plan may break.
+    pub targets: HashSet<Cell>,
 }
 
 /// Pitch and sneak are not stored in the plan: they follow from the wanted state alone.
@@ -107,6 +117,10 @@ pub fn run(
 ) -> io::Result<Report> {
     let off = opts.offset.unwrap_or_else(|| Offset::between(plan.header.start, feet_cell(bot.feet)));
     let mut world = World::new(plan.header.origin.1, plan.header.start);
+    if let Some(d) = &opts.demolition {
+        world.blocks.extend(d.blocks.clone());
+        world.demolish = d.targets.clone();
+    }
     let mut ledger = Ledger::new(plan, off);
     ledger.keep = opts.keep.clone();
     let mut rep = Report::default();

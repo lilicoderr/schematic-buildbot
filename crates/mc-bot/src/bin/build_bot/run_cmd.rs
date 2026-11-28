@@ -50,6 +50,7 @@ pub fn run_cmd(args: &[String]) {
         extras_file: Some(PathBuf::from(format!("{}.extras", progress.display()))),
         refit: flag(args, "--refit").map(|s| parse_cells(&s)).unwrap_or_default(),
         keep: Default::default(),
+        demolition: None,
     };
     if opts.from_step > 0 {
         println!("{}", tr!("resuming after step {}", "{}단계 다음부터 이어서 실행", opts.from_step));

@@ -117,7 +117,7 @@ fn wrong_merged_changed_and_stray_blocks_are_noticed_and_put_right() {
     let (mut bot, _) = PlayClient::join_v(&format!("127.0.0.1:{port}"), "127.0.0.1", port, "Mock", 767).unwrap();
     bot.place_delay = std::time::Duration::from_millis(5);
     // no final --verify audit: the checks during the run must be enough
-    let opts = Opts { verify: false, from_step: 0, offset: None, extras_file: None, refit: Vec::new(), keep: Default::default() };
+    let opts = Opts { verify: false, from_step: 0, offset: None, extras_file: None, refit: Vec::new(), keep: Default::default(), demolition: None };
     let mut log = Vec::new();
     let report = exec::run(&mut bot, &plan, &opts, &mut |m| log.push(m.to_string()), &mut |_, _| {}).unwrap();
     drop(bot);

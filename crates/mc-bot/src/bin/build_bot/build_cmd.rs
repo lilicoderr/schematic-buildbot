@@ -168,7 +168,7 @@ fn online(args: &Args, job: &Job, plan: &Plan, version: &Version, clean: bool) -
     if from_step > 0 {
         println!("{}", tr!("resuming after step {} of {}", "{}단계 다음부터 이어서 건축 (전체 {}단계)", from_step, plan.steps.len()));
     }
-    let opts = exec::Opts { verify: true, from_step, offset: Some(offset), extras_file: Some(job.extras()), refit: Vec::new(), keep };
+    let opts = exec::Opts { verify: true, from_step, offset: Some(offset), extras_file: Some(job.extras()), refit: Vec::new(), keep, demolition: None };
     let total = plan.steps.len();
     let mut shown = from_step * 20 / total.max(1);
     let mut link = mc_bot::ui_link::Reporter::start(plan, from_step);

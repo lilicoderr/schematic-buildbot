@@ -39,11 +39,13 @@ pub struct World {
     /// Placements whose clicks would not give the requested state.
     pub mismatches: usize,
     pub feet: Cell,
+    /// Blocks an undo may break besides scaffold: the ones the bot itself placed earlier.
+    pub demolish: HashSet<Cell>,
 }
 
 impl World {
     pub fn new(ground_y: i32, start: Cell) -> Self {
-        World { ground_y, blocks: HashMap::new(), scaffold: HashSet::new(), pending: HashMap::new(), mismatches: 0, feet: start }
+        World { ground_y, blocks: HashMap::new(), scaffold: HashSet::new(), pending: HashMap::new(), mismatches: 0, feet: start, demolish: HashSet::new() }
     }
 
     pub fn solid(&self, c: Cell) -> bool {
@@ -254,7 +256,7 @@ pub fn apply(w: &mut World, st: &Step) -> Result<(), String> {
             Ok(())
         }
         Step::Break(p) => {
-            if !w.scaffold.contains(&cell(*p)) {
+            if !w.scaffold.contains(&cell(*p)) && !w.demolish.contains(&cell(*p)) {
                 return Err(format!("{p:?} is not scaffold; only scaffold may be broken"));
             }
             if eye_dist(w.feet, *p) > MAX_CLICK {
@@ -269,8 +271,15 @@ pub fn apply(w: &mut World, st: &Step) -> Result<(), String> {
                     return Err(format!("{s} at {n:?} would fall or pop off"));
                 }
             }
-            w.blocks.remove(&cell(*p));
+            let gone = w.blocks.remove(&cell(*p));
             w.scaffold.remove(&cell(*p));
+            // the other half of a door or bed goes with it
+            if let Some(s) = gone.filter(|_| w.demolish.remove(&cell(*p))) {
+                let (name, props) = split_state(&s);
+                if let Some(o) = rules::second_half(&name, &props, *p).filter(|o| w.demolish.remove(&cell(*o))) {
+                    w.blocks.remove(&cell(o));
+                }
+            }
             fall_after_break(w)
         }
         Step::Checkpoint { count, hash, .. } => {

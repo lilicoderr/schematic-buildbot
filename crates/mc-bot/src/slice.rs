@@ -64,11 +64,17 @@ fn add(f: impl FnOnce(&mut Times), t0: std::time::Instant, field: fn(&mut Times)
 }
 
 /// Records movement as plan steps instead of moving anybody.
-struct Recorder {
-    feet: Vec3,
-    steps: Vec<Step>,
+pub(crate) struct Recorder {
+    pub(crate) feet: Vec3,
+    pub(crate) steps: Vec<Step>,
     /// Scaffold blocks currently standing; a break of anything else is a planner slip and is dropped.
-    alive: HashSet<BlockPos>,
+    pub(crate) alive: HashSet<BlockPos>,
+}
+
+impl Recorder {
+    pub(crate) fn new(start: Cell) -> Self {
+        Recorder { feet: cell_feet(start), steps: Vec::new(), alive: HashSet::new() }
+    }
 }
 
 impl Mover for Recorder {
