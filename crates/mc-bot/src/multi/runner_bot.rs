@@ -70,7 +70,10 @@ pub(super) fn bot_main(sh: &Shared, bot: usize) {
     let mut client = connect(sh, bot).map_err(|e| sh.fail(bot, e)).ok();
     sh.joined.wait();
     if let (0, Some(c)) = (bot, &client) {
-        *sh.offset.lock().unwrap_or_else(|e| e.into_inner()) = Some(decide_offset(sh, c));
+        let off = decide_offset(sh, c);
+        let o = off.pos(crate::world::BlockPos::new(sh.multi.phases[0][0].plan.header.origin.0, sh.multi.phases[0][0].plan.header.origin.1, sh.multi.phases[0][0].plan.header.origin.2));
+        println!("blueprint origin in the world: {},{},{}", o.x, o.y, o.z);
+        *sh.offset.lock().unwrap_or_else(|e| e.into_inner()) = Some(off);
     }
     sh.offset_known.wait();
     let off = *sh.offset.lock().unwrap_or_else(|e| e.into_inner());

@@ -110,6 +110,34 @@ The page made no request to anything but the program itself. Not checked: other 
 
 <p align="center"><img src="docs/webui-preview.png" alt="build-bot ui after loading the small factory (not in-game)" width="400"> <img src="docs/webui-stopped.png" alt="build-bot ui after Stop" width="400"></p>
 
+## Several bots building together: `--bots N`
+
+`build-bot build castle.schem host:port --bots 4` (N = 2 to 4) builds with N bots at once, named `BuildBot1` ...
+`BuildBot4` (`--name` plus a number). Nothing about the rules changes: every bot walks and jumps on the ground, never
+flies, and the block states stay exact.
+
+* **Strips.** The schematic is cut along x or z into one strip per bot. A bot stands, places and builds scaffold only in
+  the columns of its own strip, so two bots can never place into or stand in each other's cells, whatever their relative
+  speeds, and nobody removes scaffold another bot needs: every bot owns its scaffold and takes all of it down inside its
+  strip. Cuts never split a bed, a double chest, a door with its neighbours, or a block from what it hangs on. The cut
+  positions are tried and moved until the estimated finish times of the bots are even (the plan is cut again with each
+  candidate, so this part of planning takes a while: tens of seconds for the small factory).
+* **A later phase.** What no strip can build alone (it needs something across a cut) is left out of its strip and built
+  afterwards by bot 1, alone; the other bots have left by then. There is a barrier between the phases.
+* **Joint simulator** (`mc_bot::multi::joint`). The plans of all bots are replayed in one shared world, one player per
+  bot, in six interleavings (by estimated time, one bot after the other in both directions, three random ones): every
+  step must be legal with the strict single-bot rules, no block may be placed into or a bot moved into another bot's body,
+  scaffold may be broken only by its owner and never under another bot, and the result must be the schematic exactly. A
+  plan that fails is never built.
+* **Runner.** One connection and thread per bot; all join, walk to their start cell and begin together. Each part has its
+  own progress file in `.buildbot/<job>/botsN/`, so running the same command again resumes every bot at its own step. If
+  one bot fails or is removed, all others stop at their next packet (nothing is left half-way in a state the plan cannot
+  continue from).
+* The verifier of each bot ignores the columns of the other strips, so a bot never "repairs" what a neighbour is placing.
+
+Not covered: the site survey of the single-bot `build` (`--force`), `--rotate` and `--mirror` are applied before
+planning and work, but undo of a multi-bot build and `ui` do not know about it yet.
+
 ## Slice, simulate, run (plan pipeline)
 
 Like a 3D-printer slicer, the bot can compile a schematic offline into a deterministic plan and replay it:
