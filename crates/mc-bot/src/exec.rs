@@ -233,6 +233,11 @@ pub fn run(
         rep.steps_done = i + 1;
         if level.is_empty() {
             on_step(i + 1, off);
+            // a safe stop asked for by `build-bot ui`: between steps, with the progress saved
+            if crate::ui_link::stop_requested() && i + 1 < plan.steps.len() {
+                rep.aborted = Some("stopped on request".into());
+                break;
+            }
         }
     }
     bot.idle(Duration::from_millis(500))?;

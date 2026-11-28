@@ -49,6 +49,7 @@ pub mod slice_stats;
 pub mod support;
 pub mod text;
 pub mod tour;
+pub mod ui_link;
 pub mod schematic;
 pub mod verify;
 pub mod version;

@@ -20,6 +20,7 @@ use std::time::Duration;
 const MAX_ORIGIN_WALK: i32 = 128;
 
 pub fn build_cmd(raw: &[String]) {
+    mc_bot::ui_link::listen();
     let mut raw = raw.to_vec();
     if raw.iter().any(|a| a == "--ask") {
         raw.retain(|a| a != "--ask");
@@ -167,7 +168,9 @@ fn online(args: &Args, job: &Job, plan: &Plan, version: &Version, clean: bool) -
     let opts = exec::Opts { verify: true, from_step, offset: Some(offset), extras_file: Some(job.extras()), refit: Vec::new() };
     let total = plan.steps.len();
     let mut shown = from_step * 20 / total.max(1);
+    let mut link = mc_bot::ui_link::Reporter::start(plan, from_step);
     let mut on_step = |done: usize, off: Offset| {
+        link.step(done);
         if let Err(e) = run_state::save(&job.progress(), fingerprint, done, off) {
             eprintln!("  progress: {e}");
         }
