@@ -29,6 +29,8 @@ pub const CHECKPOINT_EVERY: usize = 250;
 const SEAL_CAP: usize = 20_000;
 /// This many blocks in a row without a standing spot means the bot is stuck: stop and say where.
 const STALL_LIMIT: usize = 40;
+/// Other standing cells tried when none of the clicks for the wanted state works from here.
+const AIM_TRIES: usize = 6;
 
 /// Where planning time went in the last `slice` call on this thread (printed by the CLI; kept out
 /// of the plan so plans stay byte-identical).
@@ -247,6 +249,52 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             }
             continue;
         }
+        // A state that needs a face no neighbour offers (a pillar axis, say) is clicked on a
+        // temporary block, and that may only fit from another standing cell.
+        let wanted = Block { pos: world, ..(*b).clone() };
+        let rule = orient::rule(&wanted);
+        let lost = |p: &placement::Plan| !rule.allows(p.clicks[0].face, p.clicks[0].cursor.1);
+        let mut aimed = None;
+        let unclickable = rule != orient::Rule::Any && pl.missing_support.is_none() && {
+            let ok = |c: &placement::Click| {
+                solid(c.support) && !usable.contains(&c.support) && crate::world::eye_to_box(rec.feet, c.support) <= crate::world::CLICK_REACH
+                    && !slabs.get(&c.support).is_some_and(|s| orient::merges_into(s, &b.name, c.face, c.cursor.1))
+            };
+            matches!(placement::plan_clicks(&wanted, ok), Action::Place(p) if lost(&p) || !p.clicks.iter().all(|c| c.support == world || ok(c)))
+        };
+        if unclickable {
+            for _ in 0..=AIM_TRIES {
+                let feet = rec.feet;
+                let cellp = |p: BlockPos| (p.x, p.y, p.z);
+                // standing blocks, scaffold included
+                let clickable = |p: BlockPos| {
+                    (solid(p) || rec.alive.contains(&p)) && !usable.contains(&p) && crate::world::eye_to_box(feet, p) <= crate::world::CLICK_REACH
+                };
+                let safe = |c: &placement::Click| !slabs.get(&c.support).is_some_and(|s| orient::merges_into(s, &b.name, c.face, c.cursor.1));
+                aimed = support::aim(&wanted, feet, &|p| site.terrain.solid(cellp(p)), &|p| blocks_cell(here, p), &clickable, &safe);
+                if aimed.is_some() {
+                    break;
+                }
+                site.terrain.avoid.insert(here);
+                site.approach(&mut rec, &upcoming).map_err(|e| e.to_string())?;
+                let next = feet_cell(rec.feet);
+                if next == here || !within_reach(rec.feet, world) || blocks_cell(next, world) || site.terrain.sealed_in(next, cellp(world), SEAL_CAP) {
+                    here = next;
+                    break;
+                }
+                here = next;
+            }
+            site.terrain.avoid.clear();
+            let mut trapped = || !last_pass && site.terrain.sealed_in(here, (world.x, world.y, world.z), SEAL_CAP);
+            if aimed.is_none() && (!within_reach(rec.feet, world) || blocks_cell(here, world) || trapped()) {
+                if !last_pass {
+                    deferred.push(i);
+                    continue;
+                }
+                unreachable.push((world, format!("{}/out_of_reach", b.name)));
+                continue;
+            }
+        }
         // Click only against blocks that are really within the server's click reach (docs/RE/placement.md).
         let feet_now = rec.feet;
         let near = |p: BlockPos| solid(p) && !usable.contains(&p) && crate::world::eye_to_box(feet_now, p) <= crate::world::CLICK_REACH;
@@ -267,8 +315,14 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             continue;
         }
         let mut chain: Vec<support::Link> = Vec::new();
+        if let Some((links, p2)) = aimed {
+            (chain, pl) = (links, p2);
+            for l in &chain {
+                rec.alive.insert(l.pos);
+                rec.steps.push(Step::Support { pos: l.pos, clicks: vec![l.click.clone()] });
+            }
         // `plan_clicks` falls back to a floor click when nothing is usable, even one that would merge
-        if pl.clicks.iter().any(|c| c.support != world && (!near(c.support) || !safe(c))) {
+        } else if pl.clicks.iter().any(|c| c.support != world && (!near(c.support) || !safe(c))) {
             let cellp = |p: BlockPos| (p.x, p.y, p.z);
             let can_click = |p: BlockPos| site.terrain.solid(cellp(p));
             let blocked = |p: BlockPos| blocks_cell(here, p);
@@ -299,10 +353,19 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
                     continue;
                 }
             }
+            if !last_pass && lost(&pl) {
+                deferred.push(i);
+                continue;
+            }
             for l in &chain {
                 rec.alive.insert(l.pos);
                 rec.steps.push(Step::Support { pos: l.pos, clicks: vec![l.click.clone()] });
             }
+        }
+        // from another standing spot, later, there may be room for that temporary block
+        if !last_pass && lost(&pl) {
+            deferred.push(i);
+            continue;
         }
         rec.steps.push(Step::Place { pos: world, state: state.clone(), yaw: pl.yaw, clicks: click_steps(&pl) });
         for l in chain.iter().rev() {

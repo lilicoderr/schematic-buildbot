@@ -5,7 +5,10 @@
 //! blocks is placed from a solid anchor out to the block, the block is placed against the chain,
 //! and the chain is broken again.
 
+use crate::orient;
+use crate::placement::{self, Action, Click, Plan};
 use crate::plan::ClickStep;
+use crate::schematic::Block;
 use crate::world::{eye_to_box, within_reach, BlockPos, Face, Vec3, CLICK_REACH};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -41,28 +44,78 @@ pub fn find_chain(
     solid: &dyn Fn(BlockPos) -> bool,
     blocked: &dyn Fn(BlockPos) -> bool,
 ) -> Option<Vec<Link>> {
-    let usable = |p: BlockPos| !solid(p) && !blocked(p) && p != target && within_reach(feet, p);
-    // BFS outward from the target's neighbours towards a cell that touches something solid.
+    let free = |p: BlockPos| !solid(p) && !blocked(p) && p != target && within_reach(feet, p);
+    let starts = Face::HORIZONTAL.iter().chain([&Face::Up, &Face::Down]).map(|f| target.offset(*f));
+    search(starts, feet, &free, solid)
+}
+
+/// A click that gives `block` its wanted state when no neighbour standing now offers the needed
+/// face (a lone horizontal log, an upper half with nothing beside it): either on something already
+/// there, or on a temporary block put exactly where that face is (the last link of the returned
+/// chain, which the caller removes again). `clickable` says which standing blocks can be clicked
+/// from `feet`, `safe` refuses clicks that would merge into the support.
+pub fn aim(
+    block: &Block,
+    feet: Vec3,
+    solid: &dyn Fn(BlockPos) -> bool,
+    blocked: &dyn Fn(BlockPos) -> bool,
+    clickable: &dyn Fn(BlockPos) -> bool,
+    safe: &dyn Fn(&Click) -> bool,
+) -> Option<(Vec<Link>, Plan)> {
+    let target = block.pos;
+    let rule = orient::rule(block);
+    let plan_with = |chain: &[Link]| {
+        let ok = |c: &Click| (clickable(c.support) || chain.iter().any(|l| l.pos == c.support)) && safe(c);
+        match placement::plan_clicks(block, ok) {
+            Action::Place(p) => {
+                let good = rule.allows(p.clicks[0].face, p.clicks[0].cursor.1)
+                    && p.missing_support.is_none()
+                    && p.clicks.iter().all(|c| c.support == target || ok(c));
+                good.then_some(p)
+            }
+            Action::Skip(_) => None,
+        }
+    };
+    if let Some(p) = plan_with(&[]) {
+        return Some((Vec::new(), p));
+    }
+    let free = |p: BlockPos| !solid(p) && !blocked(p) && p != target && within_reach(feet, p);
+    let chain = placement::candidates(target, false)
+        .iter()
+        .filter(|c| rule.allows(c.face, c.cursor.1))
+        .filter_map(|c| search(std::iter::once(c.support), feet, &free, clickable))
+        .min_by_key(Vec::len)?;
+    plan_with(&chain).map(|p| (chain, p))
+}
+
+/// Breadth-first from `starts` (each may hold the chain's last link) to a `free` cell that
+/// touches an `anchor`.
+fn search(
+    starts: impl Iterator<Item = BlockPos>,
+    feet: Vec3,
+    free: &dyn Fn(BlockPos) -> bool,
+    anchored: &dyn Fn(BlockPos) -> bool,
+) -> Option<Vec<Link>> {
+    // BFS outward from the starting cells towards a cell that touches something solid.
     let mut came: HashMap<BlockPos, BlockPos> = HashMap::new();
     let mut queue: VecDeque<(BlockPos, usize)> = VecDeque::new();
     let mut seen: HashSet<BlockPos> = HashSet::new();
-    for f in Face::HORIZONTAL.iter().chain([&Face::Up, &Face::Down]) {
-        let n = target.offset(*f);
-        if usable(n) && seen.insert(n) {
+    for n in starts {
+        if free(n) && seen.insert(n) {
             queue.push_back((n, 1));
         }
     }
     while let Some((cur, len)) = queue.pop_front() {
         for f in Face::HORIZONTAL.iter().chain([&Face::Up, &Face::Down]) {
             let anchor = cur.offset(*f);
-            if solid(anchor) && eye_to_box(feet, anchor) <= CLICK_REACH {
+            if anchored(anchor) && eye_to_box(feet, anchor) <= CLICK_REACH {
                 return Some(chain_from(cur, *f, &came));
             }
         }
         if len < MAX_CHAIN {
             for f in Face::HORIZONTAL.iter().chain([&Face::Up, &Face::Down]) {
                 let n = cur.offset(*f);
-                if usable(n) && seen.insert(n) {
+                if free(n) && seen.insert(n) {
                     came.insert(n, cur);
                     queue.push_back((n, len + 1));
                 }

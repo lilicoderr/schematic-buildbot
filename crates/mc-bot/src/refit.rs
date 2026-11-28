@@ -117,25 +117,23 @@ fn place_again(bot: &mut PlayClient, run: &mut Run, site: &mut Site, step: Optio
     let good = |clicks: &[Click], ok: &dyn Fn(&Click) -> bool| !clicks.is_empty() && clicks.iter().all(|c| c.support == at || ok(c));
     let mut chain = Vec::new();
     if !good(&pl.clicks, &near) {
-        match placement::plan_clicks(&block, near) {
-            Action::Place(p) if p.missing_support.is_none() && good(&p.clicks, &near) => {
-                pl = placement::Plan { yaw: pl.yaw.or(p.yaw), ..p };
-            }
-            _ => {
-                let here = feet_cell(feet);
-                let solid = |q: BlockPos| site.terrain.solid((q.x, q.y, q.z));
-                chain = support::find_chain(at, feet, &solid, &|q| blocks_cell(here, q)).unwrap_or_default();
-                let links: Vec<BlockPos> = chain.iter().map(|l| l.pos).collect();
-                let with_chain = |c: &Click| near(c) || (links.contains(&c.support) && safe(c));
-                match placement::plan_clicks(&block, with_chain) {
-                    Action::Place(p) if good(&p.clicks, &with_chain) => pl = placement::Plan { yaw: pl.yaw.or(p.yaw), ..p },
-                    _ => {
-                        say(&format!("repair: nothing to click for {at:?}"));
-                        return Ok(());
-                    }
-                }
-            }
-        }
+        let here = feet_cell(feet);
+        let solid = |q: BlockPos| site.terrain.solid((q.x, q.y, q.z));
+        // never a usable block: it would open instead
+        let clickable = |q: BlockPos| {
+            let under = world.blocks.get(&(q.x - off.dx, q.y - off.dy, q.z - off.dz));
+            solid(q) && eye_to_box(feet, q) <= CLICK_REACH && !under.is_some_and(|v| placement::is_usable(&split_state(v).0))
+        };
+        // the wanted state first (with a temporary block if a face is missing); otherwise any click
+        let found = support::aim(&block, feet, &solid, &|q| blocks_cell(here, q), &clickable, &safe).or_else(|| match placement::plan_clicks(&block, near) {
+            Action::Place(p) if p.missing_support.is_none() && good(&p.clicks, &near) => Some((Vec::new(), p)),
+            _ => None,
+        });
+        let Some((links, p)) = found else {
+            say(&format!("repair: nothing to click for {at:?}"));
+            return Ok(());
+        };
+        (chain, pl) = (links, placement::Plan { yaw: pl.yaw.or(p.yaw), ..p });
     }
     for l in &chain {
         bot.place_support(l.pos, l.click.support, l.click.face, l.click.cursor)?;

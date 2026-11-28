@@ -172,7 +172,7 @@ pub fn plan_clicks(block: &Block, usable: impl Fn(&Click) -> bool) -> Action {
 }
 
 /// Every way to click a neighbour of `pos` so the block lands in `pos`, in order of preference.
-fn candidates(pos: BlockPos, upper_first: bool) -> Vec<Click> {
+pub(crate) fn candidates(pos: BlockPos, upper_first: bool) -> Vec<Click> {
     let floor = Click { support: pos.below(), face: Face::Up, cursor: (0.5, 1.0, 0.5) };
     let ceiling = Click { support: pos.offset(Face::Up), face: Face::Down, cursor: (0.5, 0.0, 0.5) };
     let sides = |y: f32| {
