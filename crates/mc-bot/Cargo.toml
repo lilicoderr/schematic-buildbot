@@ -9,6 +9,8 @@ description = "Minecraft 1.21.1 건축 봇 + 패킷 분석기 (offline-mode)"
 mc-proto = { path = "../mc-proto" }
 flate2 = "1.0"
 ureq = "2.10"
+# the random token of `build-bot ui` (already in the lock file through ureq's TLS library)
+getrandom = "0.2"
 
 [[bin]]
 name = "packet-probe"

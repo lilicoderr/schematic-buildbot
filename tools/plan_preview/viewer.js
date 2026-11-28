@@ -148,8 +148,9 @@ window.addEventListener('resize', resize)
 resize()
 if (window.EMBED && window.EMBED.plan) load(window.EMBED.plan)
 
-// Used by render.js to take screenshots.
+// Used by render.js to take screenshots and by `build-bot ui` (crates/mc-bot/webui).
 window.preview = {
+  load(text) { stop(); load(text); resize() },
   set({ step, layer, azimuth, elevation, zoom }) {
     if (step !== undefined) $('step').value = step
     if (layer !== undefined) $('layer').value = layer

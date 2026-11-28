@@ -1,0 +1,41 @@
+// The page's words in English and Korean. Messages from the program are already in the
+// language the UI was started with.
+window.EMBED = { colours: {} } // the previewer reads block colours from here
+window.TEXTS = {
+  en: {
+    local: 'local page: only this computer can reach it', step1: '1. Schematic', step2: '2. Server', step3: '3. Build',
+    drop: 'Drop a schematic here, or click to choose', fetch: 'Load link', loading: 'Reading and planning...',
+    clean: 'Simulation passed: every step is legal and the result equals the schematic.', blocktypes: 'Block types',
+    server: 'Server', botname: 'Bot name', more: 'More options', version: 'Version', auto: 'detect from the server',
+    origin: 'Origin x,y,z', fresh: 'Start over (forget saved progress)', partial: 'Build anyway, leaving out or changing the blocks listed in red',
+    rules: 'Offline-mode server, bot in creative mode, flat clear ground. Only build where you have permission.',
+    build: 'Build', stop: 'Stop', percent: 'percent', rate: 'blocks/s', eta: 'time left', repairs: 'repairs',
+    counts: (s) => `blocks placed ${s.placed} / ${s.places} | plan steps ${s.step} / ${s.steps}`,
+    badge: 'PLAN PREVIEW · offline, not in-game', empty: 'Load a schematic to see it here. Drag to rotate, scroll to zoom.',
+    layer: 'Layer', only: 'only this layer', follow: 'follow the build', support: 'temporary support', pillar: 'scaffold pillar',
+    details: 'Step details', noToken: 'Open this page with the full link printed by build-bot ui (it carries a one-time key).',
+    badToken: 'This key is not valid any more. Open the new link printed by build-bot ui.',
+    gone: 'The build-bot UI is not answering. Is its window still open?', tooBig: 'The file is larger than 32 MB.',
+    need: 'Enter the server address (host:port).', fFile: 'file', fSize: 'size (x, y, z)', fBlocks: 'blocks', fPlace: 'placements',
+    fTemp: 'temporary blocks', fTime: 'estimated time', fVersion: 'planned for', missingItem: 'not available',
+    phases: { idle: '', starting: 'preparing...', building: 'building', stopping: 'stopping safely...', done: 'finished', stopped: 'stopped', failed: 'failed: see the log' },
+  },
+  ko: {
+    local: '로컬 페이지: 이 컴퓨터에서만 접속할 수 있습니다', step1: '1. 설계도', step2: '2. 서버', step3: '3. 건축',
+    drop: '설계도 파일을 여기에 끌어다 놓거나 클릭해서 선택', fetch: '링크 불러오기', loading: '읽고 계획하는 중...',
+    clean: '시뮬레이션 통과: 모든 단계가 합법이고 결과가 설계도와 같습니다.', blocktypes: '블록 종류',
+    server: '서버 주소', botname: '봇 이름', more: '추가 설정', version: '버전', auto: '서버에서 자동 감지',
+    origin: '원점 x,y,z', fresh: '처음부터 (저장된 진행 지우기)', partial: '빨간 목록의 블록은 빼거나 다른 상태가 되어도 짓기',
+    rules: '오프라인 모드 서버, 봇은 크리에이티브, 평평하고 빈 땅이 필요합니다. 허락받은 서버에서만 사용하세요.',
+    build: '건축 시작', stop: '중지', percent: '진행률(%)', rate: '블록/초', eta: '남은 시간', repairs: '수리',
+    counts: (s) => `설치한 블록 ${s.placed} / ${s.places} | 계획 단계 ${s.step} / ${s.steps}`,
+    badge: '계획 미리보기 · 오프라인 (게임 화면 아님)', empty: '설계도를 불러오면 여기에 보입니다. 끌어서 회전, 휠로 확대.',
+    layer: '층', only: '이 층만 보기', follow: '건축 따라가기', support: '임시 받침', pillar: '비계 기둥',
+    details: '단계 정보', noToken: 'build-bot ui 가 출력한 전체 링크로 여세요 (일회용 키가 들어 있습니다).',
+    badToken: '키가 더 이상 유효하지 않습니다. build-bot ui 가 새로 출력한 링크로 여세요.',
+    gone: 'build-bot UI 가 응답하지 않습니다. 실행 창이 열려 있나요?', tooBig: '파일이 32 MB 보다 큽니다.',
+    need: '서버 주소(host:port)를 입력하세요.', fFile: '파일', fSize: '크기 (x, y, z)', fBlocks: '블록 수', fPlace: '설치 횟수',
+    fTemp: '임시 블록', fTime: '예상 시간', fVersion: '계획 기준 버전', missingItem: '지원 안 함',
+    phases: { idle: '', starting: '준비 중...', building: '건축 중', stopping: '안전하게 멈추는 중...', done: '완료', stopped: '중지됨', failed: '실패: 로그를 확인하세요' },
+  },
+}

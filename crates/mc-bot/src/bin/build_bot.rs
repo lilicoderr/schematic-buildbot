@@ -17,6 +17,8 @@ mod build_plan;
 mod plan_cmds;
 #[path = "build_bot/run_cmd.rs"]
 mod run_cmd;
+#[path = "build_bot/ui/mod.rs"]
+mod ui;
 
 use mc_bot::builder::PlayClient;
 use mc_bot::nav::{self, Terrain};
@@ -58,6 +60,9 @@ build-bot — build a blueprint on a Minecraft offline-mode server
 ONE COMMAND (download, plan, check the server, build, verify; run again to resume):
   build-bot build <file or URL> <host:port> [--name N] [--origin x,y,z] [--dry-run]
 
+WEB PAGE on this computer (drop a schematic, 3D preview, build, stop):
+  build-bot ui [--port N] [--no-open]
+
 USAGE:
   build-bot [host:port] [name] [blueprint]   build (default 127.0.0.1:25566, BuildBot)
   build-bot x x <blueprint> --dry-run        validate offline, no server needed
@@ -82,6 +87,9 @@ build-bot — 설계도를 Minecraft 오프라인 서버에 건축
 
 한 번에 짓기 (다운로드, 계획, 서버 점검, 건축, 검증. 다시 실행하면 이어서):
   build-bot build <파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--dry-run]
+
+이 컴퓨터의 웹 화면 (설계도 끌어다 놓기, 3D 미리보기, 건축, 중지):
+  build-bot ui [--port 번호] [--no-open]
 
 사용법:
   build-bot [host:port] [이름] [설계도]       건축 (기본 127.0.0.1:25566, BuildBot)
@@ -162,6 +170,7 @@ fn main() {
             "slice" => return plan_cmds::slice_cmd(rest),
             "simulate" => return plan_cmds::simulate_cmd(rest),
             "run" => return run_cmd::run_cmd(rest),
+            "ui" => return ui::ui_cmd(rest),
             _ => {}
         }
     }

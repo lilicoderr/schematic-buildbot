@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>build-bot</title>
+<link rel="stylesheet" href="/ui.css">
+<script src="/texts.js"></script>
+<script src="/plan.js"></script>
+<script type="module" src="/viewer.js"></script>
+<script type="module" src="/ui.js"></script>
+</head>
+<body>
+<header><h1>build-bot</h1><span data-t="local"></span></header>
+<p id="fatal" class="box bad" hidden></p>
+<div class="columns">
+<div class="controls">
+  <section>
+    <h2 data-t="step1"></h2>
+    <label id="drop" for="pick"><b data-t="drop"></b><small>.schem .litematic .txt (&le; 32 MB)</small></label>
+    <input type="file" id="pick" accept=".schem,.schematic,.litematic,.txt">
+    <div class="row"><input id="url" type="url" placeholder="https://.../castle.schem" spellcheck="false"><button id="fetch" data-t="fetch"></button></div>
+    <p id="loading" class="box" hidden></p>
+    <p id="loaderror" class="box bad" hidden></p>
+    <div id="summary" hidden>
+      <table id="facts"></table>
+      <ul id="problems" class="box bad" hidden></ul>
+      <ul id="warnings" class="box warn" hidden></ul>
+      <p id="clean" class="box good" data-t="clean" hidden></p>
+      <details><summary data-t="blocktypes"></summary><table id="types"></table></details>
+    </div>
+  </section>
+  <section>
+    <h2 data-t="step2"></h2>
+    <label class="field"><span data-t="server"></span><input id="server" placeholder="127.0.0.1:25565" spellcheck="false"></label>
+    <label class="field"><span data-t="botname"></span><input id="name" value="BuildBot" maxlength="16" spellcheck="false"></label>
+    <details>
+      <summary data-t="more"></summary>
+      <label class="field"><span data-t="version"></span><select id="version"><option value="auto" data-t="auto"></option></select></label>
+      <label class="field"><span data-t="origin"></span><input id="origin" placeholder="x,y,z" spellcheck="false"></label>
+      <label class="check"><input type="checkbox" id="fresh"><span data-t="fresh"></span></label>
+    </details>
+    <label class="check" id="partialrow" hidden><input type="checkbox" id="partial"><span data-t="partial"></span></label>
+    <p class="note" data-t="rules"></p>
+    <div class="row"><button id="build" class="primary" data-t="build" disabled></button><button id="stop" data-t="stop" disabled></button></div>
+  </section>
+  <section id="live-panel">
+    <h2><span data-t="step3"></span> <em id="phase"></em></h2>
+    <progress id="bar" max="100" value="0"></progress>
+    <div class="numbers">
+      <div><b id="percent">-</b><small data-t="percent"></small></div>
+      <div><b id="rate">-</b><small data-t="rate"></small></div>
+      <div><b id="eta">-</b><small data-t="eta"></small></div>
+      <div><b id="repairs">-</b><small data-t="repairs"></small></div>
+    </div>
+    <p id="counts" class="note"></p>
+    <pre id="log"></pre>
+  </section>
+</div>
+<div class="preview">
+  <div id="view"><div id="badge" data-t="badge"></div><p id="empty" data-t="empty"></p></div>
+  <div class="sliders">
+    <button id="play">Play</button><input type="range" id="step" min="0" max="0"><span id="stepv"></span>
+    <span data-t="layer"></span><input type="range" id="layer" min="0" max="0"><span id="layerv"></span>
+  </div>
+  <div class="options">
+    <label class="check"><input type="checkbox" id="only"><span data-t="only"></span></label>
+    <label class="check"><input type="checkbox" id="follow" checked><span data-t="follow"></span></label>
+    <span class="legend"><i class="support"></i><span data-t="support"></span> <i class="pillar"></i><span data-t="pillar"></span></span>
+    <details><summary data-t="details"></summary><table id="live"></table><code id="cur"></code><table id="stats"></table></details>
+  </div>
+  <input type="file" id="file" hidden>
+</div>
+</div>
+<footer><a href="/three.LICENSE.txt" target="_blank" rel="noopener">three.js 0.160.0 (MIT)</a></footer>
+</body>
+</html>
