@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-28
+
+### One command
+- `build-bot build <file-or-URL> <host:port> [--name] [--origin] [--lang ko|en] [--dry-run]`: download (http/https,
+  32 MB, 60 s), parse, plan, strict simulation, preflight, build and verify. The plan and progress are kept, so
+  running the same command again resumes.
+- Preflight advice in English and Korean: cannot connect, online mode, unsupported version (detected with a status
+  ping), not in creative mode (read from the login and game event packets), refused login and kick reasons.
+- `build.bat` for Windows (the program asks the questions; typed text never reaches the command interpreter).
+- Release archives for Windows and Linux.
+- Pinging and logging in now time out instead of waiting for ever.
+
 ### Changed
 - `slice`: inside a band of 4 layers of an 8x8 tile, blocks are no longer placed layer by layer, so one standing spot
   serves several layers (22,481-block factory live: 4,646 s to 2,822 s, exact). If this order cannot be completed,

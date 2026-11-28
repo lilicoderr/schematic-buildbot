@@ -1,0 +1,69 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x86_64
+          - os: ubuntu-22.04 # an older glibc runs on more distributions
+            name: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The tag matches the crate version
+        run: grep -qx "version = \"${GITHUB_REF_NAME#v}\"" Cargo.toml
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Build
+        run: cargo build --release --locked --bin build-bot
+      - name: Package
+        run: |
+          dir="build-bot-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          mkdir -p "$dir/blueprints"
+          cp README.md README.ko.md CHANGELOG.md LICENSE "$dir/"
+          cp blueprints/cottage.txt blueprints/factory-small.schem "$dir/blueprints/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/build-bot.exe build.bat "$dir/"
+            7z a "$dir.zip" "$dir" > /dev/null
+          else
+            cp target/release/build-bot "$dir/"
+            tar czf "$dir.tar.gz" "$dir"
+          fi
+      - name: Smoke test the packaged binary
+        run: |
+          cd "build-bot-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          ./build-bot build blueprints/factory-small.schem --dry-run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            build-bot-*.zip
+            build-bot-*.tar.gz
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum build-bot-* > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" build-bot-* SHA256SUMS --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes "Windows: unzip and double-click build.bat. Linux: ./build-bot build <schematic or URL> <host:port>. Only offline-mode servers in creative mode are supported; use it only on servers where you have permission. See CHANGELOG.md."

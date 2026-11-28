@@ -3,7 +3,7 @@
 <p align="center"><b>English</b> · <a href="README.ko.md">한국어</a></p>
 
 <p align="center">
-  <b>A Rust bot that downloads a Minecraft schematic from a URL and builds it on your server.</b><br>
+  <b>One command: a Rust bot downloads a Minecraft schematic from a URL and builds it on your offline-mode creative server.</b><br>
   Hand-written protocol (1.20.4, 1.21.1, 1.21.4, 26.3), no libraries · walks like a player, never flies or speeds · block states supported
 </p>
 
@@ -22,31 +22,63 @@
 </p>
 <p align="center"><sub>Blueprint previews rendered by <code>tools/preview.py</code> (no server needed)</sub></p>
 
-## At a glance
+## Quickstart: one command
+
+> **Supported servers:** only **offline-mode** (`online-mode=false`) servers, with the bot in **creative mode**.
+> Online-mode (premium authentication) servers are not supported. Use it only on a server you run or where you have
+> the operator's permission.
+
+1. **Get the bot.** Download the Windows or Linux archive from
+   [Releases](https://github.com/lilicoderr/schematic-buildbot/releases) and unpack it (or `cargo build --release`).
+2. **Prepare the server.** In `server.properties`: `online-mode=false` and `gamemode=creative`, then restart. With
+   online mode off anyone can join under any name, so keep such a server private or whitelisted. The bot builds on flat,
+   clear ground.
+3. **Build.** On Windows double-click `build.bat` and answer its questions (schematic link or file, server address, bot
+   name). Or run:
 
 ```bash
-# Paste a direct .schem / .litematic link from a schematic site: it downloads and builds.
-build-bot 127.0.0.1:25565 MyBot https://example.com/castle.schem
-
-# Validate offline: size, block list, layer map, which block states can be reproduced.
-build-bot x x castle.schem --dry-run
-
-# Interrupted (kick, crash, Ctrl-C)? Continue exactly where it stopped.
-build-bot 127.0.0.1:25565 MyBot castle.schem --resume
+build-bot build https://example.com/castle.schem 127.0.0.1:25565
 ```
+
+A link from a sharing site must be the **direct** `.schem` / `.litematic` download link, not the web page that shows the
+build (or download the file and give its path). That one command:
+
+1. downloads the file (http/https only, at most 32 MB and 60 s),
+2. detects the server's version with a status ping,
+3. plans every step offline and **simulates** the plan; if a block cannot be reproduced exactly it says why and builds
+   nothing,
+4. checks the server: cannot connect, online mode, unsupported version, not creative (it names the command and waits
+   120 s), refused or kicked (with the reason), each with what to do,
+5. builds, checks the block states the server reports and repairs wrong blocks.
+
+**Interrupted?** Run the same command again from the same folder: the plan and the progress are kept in `.buildbot/`
+and the build continues at the same place.
+
+| `build` option | Meaning |
+|---|---|
+| `--dry-run` | print blocks, estimated time and unsupported blocks, then stop **without connecting** (address optional; give `--version` if not 1.21.1) |
+| `--origin x,y,z` | world position of the blueprint's (0,0,0) corner. `y` must be the height the bot stands at; at most 128 blocks from where it joins, flat clear ground on the way. Default: just beside where the bot joins |
+| `--name N` | bot name (default `BuildBot`) |
+| `--lang en\|ko` | output language |
+| `--allow-partial` | build even if some blocks are unsupported, unreachable or would get another state |
+| `--fresh` | forget the saved progress (or the "already finished" mark) and start over |
+| `--version V`, `--wait-creative S`, `--delay-ms N`, `--walk`, `--state-dir D` | set the version yourself, change the creative-mode wait, slow down, do not sprint, keep job files elsewhere |
 
 ```text
-=== blueprint check: 'Stair tower' ===
-size 5x3x5 (x 0..4, y 0..2, z 0..4), 51 blocks
-block types:
-     33  stone_bricks
-     12  oak_log
-      4  stone_slab
-      2  oak_stairs
-All blocks can be placed.
-...
-block states: 18 blocks carry states; 18 will match exactly, 0 second-half blocks are placed automatically
+$ build-bot build blueprints/factory-small.schem --dry-run
+planning 2408 blocks...
+blueprint 'factory-small.schem': 2408 blocks, size 27x18x24, Minecraft 1.21.1
+plan: 2408 placements, 249 temporary blocks (removed again), estimated time 3m57s
+unsupported blocks: 0 | not buildable in total: 0
+simulation: clean (every step legal, final blocks == schematic)
+dry run: not connecting to any server
 ```
+
+Checked live on 2026-11-28 (local vanilla 1.21.1, small factory): `build` with an `http://` URL on a local test web
+server; survival mode was detected and switched with the printed command; the bot process was killed at about 40% and
+the same command run again: 2408/2408 states exact over RCON, 83,496 cells around the build all air, 0 kicks.
+`--origin` was checked with `stair-tower.txt` (a walk of about 20 blocks, 51/51 by the bot's own check). The online-mode,
+unsupported-version, cannot-connect and refused-login messages are tested against mock servers only.
 
 ## Slice, simulate, run (plan pipeline)
 
@@ -198,7 +230,9 @@ releases.
 Survival mode, online mode, Paper/Spigot and releases not listed are untested. Differences between releases:
 [docs/RE/versions.md](docs/RE/versions.md).
 
-## Install & run
+## Install & run (lower-level modes)
+
+For building, use the [one command](#quickstart-one-command) above. The direct mode below places blocks without a plan.
 
 ```bash
 cargo build --release

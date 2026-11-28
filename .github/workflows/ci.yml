@@ -19,6 +19,8 @@ jobs:
           cargo run -q --bin build-bot -- x x blueprints/cottage.txt --dry-run
           cargo run -q --bin build-bot -- x x blueprints/cottage.txt --dry-run --lang ko
           cargo run -q --bin build-bot -- x x crates/mc-bot/tests/fixtures/sample.schem --dry-run
+      - name: One-command dry run
+        run: cargo run -q --bin build-bot -- build blueprints/factory-small.schem --dry-run
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
