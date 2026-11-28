@@ -52,6 +52,7 @@ pub mod support;
 pub mod survey;
 pub mod text;
 pub mod tour;
+pub mod transform;
 pub mod ui_link;
 pub mod schematic;
 pub mod verify;

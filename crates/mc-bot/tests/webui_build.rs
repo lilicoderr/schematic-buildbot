@@ -39,6 +39,7 @@ fn server(delay: Duration, mode: u8) -> (String, mpsc::Receiver<usize>) {
         let mut p = Peer::in_play(&l);
         login(&mut p, mode);
         p.teleport(SPAWN, 1);
+        p.flat_world(SPAWN.1 - 1, &[]);
         let _ = tx.send(serve(p, delay));
     });
     (addr, rx)
@@ -148,6 +149,7 @@ fn resume_server(l: TcpListener) -> mpsc::Receiver<usize> {
         let mut p = Peer::in_play(&l);
         login(&mut p, 1);
         p.teleport(SPAWN, 1);
+        p.flat_world(SPAWN.1 - 1, &[]);
         let _ = tx.send(serve(p, Duration::ZERO));
     });
     rx

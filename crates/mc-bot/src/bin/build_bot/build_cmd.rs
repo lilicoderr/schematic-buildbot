@@ -47,6 +47,7 @@ fn build(args: &Args) -> Result<(), String> {
     };
     version::set_active(version);
     let schem = fetch::parse(&source).map_err(|e| tr!("cannot read the schematic: {}", "설계도를 읽을 수 없습니다: {}", e))?;
+    let schem = args.transform.apply(&schem);
     if schem.blocks.is_empty() {
         return Err(tr!("the schematic has no blocks", "설계도에 블록이 없습니다"));
     }

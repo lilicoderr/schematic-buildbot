@@ -19,6 +19,7 @@ pub struct Args {
     pub walk: bool,
     /// Build although the site survey found blocks in the way.
     pub force: bool,
+    pub transform: mc_bot::transform::Transform,
     pub state_dir: PathBuf,
     pub wait_creative: Duration,
     pub delay: Duration,
@@ -38,12 +39,14 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         fresh: false,
         walk: false,
         force: false,
+        transform: Default::default(),
         state_dir: PathBuf::from(".buildbot"),
         wait_creative: Duration::from_secs(120),
         delay: Duration::from_millis(10),
         time_limit: Duration::from_secs(600),
         memory_mb: 2048,
     };
+    let (mut rotate, mut mirror) = (None, None);
     let mut positional = Vec::new();
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -60,13 +63,15 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             // accepted for symmetry with `run`; `build` always verifies
             "--verify" => {}
             flag => {
-                const WITH_VALUE: [&str; 9] = ["--name", "--origin", "--version", "--lang", "--state-dir", "--wait-creative", "--delay-ms", "--time-limit", "--memory-limit-mb"];
+                const WITH_VALUE: [&str; 11] = ["--rotate", "--mirror", "--name", "--origin", "--version", "--lang", "--state-dir", "--wait-creative", "--delay-ms", "--time-limit", "--memory-limit-mb"];
                 if !WITH_VALUE.contains(&flag) {
                     return Err(tr!("unknown option {}", "알 수 없는 옵션 {}", flag));
                 }
                 let v = it.next().ok_or_else(|| tr!("{} needs a value", "{} 에 값이 필요합니다", flag))?;
                 let number = || v.parse::<u64>().map_err(|_| tr!("{} needs a number", "{} 에는 숫자가 필요합니다", flag));
                 match flag {
+                    "--rotate" => rotate = Some(v.clone()),
+                    "--mirror" => mirror = Some(v.clone()),
                     "--name" => a.name = v.clone(),
                     "--origin" => a.origin = Some(parse_origin(v)?),
                     "--version" => a.version = Some(v.clone()),
@@ -80,6 +85,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             }
         }
     }
+    a.transform = mc_bot::transform::Transform::parse(rotate.as_deref(), mirror.as_deref())?;
     let valid_name = (3..=16).contains(&a.name.len()) && a.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !valid_name {
         return Err(tr!("--name must be 3 to 16 letters, digits or _", "--name 은 영문, 숫자, _ 3~16자여야 합니다"));
@@ -103,8 +109,8 @@ fn parse_origin(s: &str) -> Result<(i32, i32, i32), String> {
 
 pub fn usage() -> String {
     tr!(
-        "usage: build-bot build <schematic file or URL> <host:port> [--name N] [--origin x,y,z] [--lang en|ko] [--dry-run]\n  more: --version V --fresh --allow-partial --wait-creative SECONDS --delay-ms N --walk --force --state-dir DIR",
-        "사용법: build-bot build <설계도 파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--lang en|ko] [--dry-run]\n  추가: --version V --fresh --allow-partial --wait-creative 초 --delay-ms N --walk --force --state-dir 폴더"
+        "usage: build-bot build <schematic file or URL> <host:port> [--name N] [--origin x,y,z] [--rotate 90|180|270] [--mirror x|z] [--lang en|ko] [--dry-run]\n  more: --version V --fresh --allow-partial --wait-creative SECONDS --delay-ms N --walk --force --state-dir DIR",
+        "사용법: build-bot build <설계도 파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--rotate 90|180|270] [--mirror x|z] [--lang en|ko] [--dry-run]\n  추가: --version V --fresh --allow-partial --wait-creative 초 --delay-ms N --walk --force --state-dir 폴더"
     )
 }
 
@@ -122,6 +128,14 @@ mod tests {
         assert_eq!((a.source.as_str(), a.server.as_deref(), a.dry_run), ("a b.schem", Some("localhost:25565"), false));
         let a = p(&["x.schem", "--dry-run", "--origin", "1, -60,3", "--lang", "ko"]).unwrap();
         assert_eq!((a.origin, a.dry_run, a.server), (Some((1, -60, 3)), true, None));
+    }
+
+    #[test]
+    fn rotate_and_mirror_are_parsed_and_checked() {
+        let a = p(&["x.schem", "--dry-run", "--rotate", "270", "--mirror", "z"]).unwrap();
+        assert_eq!((a.transform.turns, a.transform.mirror), (3, mc_bot::transform::Mirror::Z));
+        assert!(p(&["x.schem", "--dry-run", "--rotate", "45"]).is_err());
+        assert!(p(&["x.schem", "--dry-run", "--mirror", "y"]).is_err());
     }
 
     #[test]
