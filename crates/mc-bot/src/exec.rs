@@ -59,7 +59,7 @@ pub struct Opts {
 pub type Sent = HashMap<BlockPos, (i32, Placement)>;
 
 /// Pitch and sneak are not stored in the plan: they follow from the wanted state alone.
-fn to_placement(state: &str, clicks: &[crate::plan::ClickStep], yaw: Option<f32>, off: Offset) -> Placement {
+pub(crate) fn to_placement(state: &str, clicks: &[crate::plan::ClickStep], yaw: Option<f32>, off: Offset) -> Placement {
     let block = Block::from_state(BlockPos::new(0, 0, 0), state);
     Placement {
         clicks: clicks.iter().map(|c| Click { support: off.pos(c.support), face: c.face, cursor: c.cursor }).collect(),
@@ -83,56 +83,6 @@ fn state_diffs(bot: &PlayClient, world: &World, sent: &Sent, off: Offset) -> Vec
         .collect();
     out.sort_by_key(|(p, ..)| (p.y, p.x, p.z));
     out
-}
-
-/// Break each of `list` (plan coordinates) and place it again as the plan's last step for that
-/// position says. Unconfirmed results are left to the checkpoint repair that follows.
-#[allow(clippy::too_many_arguments)]
-fn refit(
-    bot: &mut PlayClient,
-    plan: &Plan,
-    world: &World,
-    sent: &mut Sent,
-    off: Offset,
-    list: &[BlockPos],
-    extras: &mut Extras,
-    say: &mut dyn FnMut(&str),
-) -> io::Result<()> {
-    if list.is_empty() {
-        return Ok(());
-    }
-    let mut site = exec_repair::site_of(world, off, extras);
-    for want in list {
-        let found = plan.steps.iter().rev().find_map(|st| match st {
-            Step::Place { pos, state, yaw, clicks } if pos == want => Some((state, yaw, clicks)),
-            _ => None,
-        });
-        let Some((state, yaw, clicks)) = found else {
-            say(&format!("refit: the plan places nothing at {want:?}"));
-            continue;
-        };
-        let (at, item) = (off.pos(*want), blocks::item_id(&split_state(state).0).unwrap_or(1));
-        let pl = to_placement(state, clicks, *yaw, off);
-        // never stand on the block that is about to be broken
-        site.terrain.avoid.insert((at.x, at.y + 1, at.z));
-        site.approach(bot, std::slice::from_ref(&at))?;
-        if crate::world::within_reach(bot.feet, at) {
-            say(&format!("refit: breaking and placing {at:?} {state}"));
-            bot.break_block(at)?;
-            bot.idle(Duration::from_millis(300))?;
-            bot.blocks.forget(at);
-            bot.place(at, item, &pl)?;
-            sent.insert(at, (item, pl));
-            bot.idle(Duration::from_millis(300))?;
-        } else {
-            say(&format!("refit: no way to {at:?}"));
-        }
-        site.terrain.avoid.clear();
-    }
-    site.finish(bot)?;
-    extras.set(site.standing());
-    exec_repair::return_to(bot, world, off, extras, say)?;
-    Ok(())
 }
 
 pub fn run(
@@ -270,7 +220,7 @@ pub fn run(
     bot.idle(Duration::from_millis(500))?;
     let complete = rep.steps_done == plan.steps.len() && rep.aborted.is_none() && bot.kicked.is_none();
     if complete {
-        refit(bot, plan, &world, &mut sent, off, &opts.refit, &mut extras, say)?;
+        crate::refit::run(bot, plan, &world, &mut sent, off, &opts.refit, &mut extras, say)?;
     }
     if opts.verify && rep.aborted.is_none() && bot.kicked.is_none() {
         rep.repaired += exec_repair::repair(bot, &world, &sent, off, &mut extras, say)?;

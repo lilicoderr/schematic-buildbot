@@ -26,6 +26,7 @@ pub mod plan;
 pub mod plan_parse;
 pub mod predict;
 pub mod progress;
+pub mod refit;
 pub mod proto;
 pub mod run_state;
 pub mod scaffold;
