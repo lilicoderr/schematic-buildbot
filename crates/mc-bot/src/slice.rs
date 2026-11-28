@@ -21,8 +21,8 @@ use std::io;
 
 /// Upcoming blocks considered when choosing where to stand (offline, so generous).
 pub const LOOKAHEAD: usize = 96;
-/// On reaching a new layer, scaffold this far below it is taken down again.
-const TIDY_BELOW: i32 = 3;
+/// On reaching a new band of layers, scaffold this far below it is taken down again.
+const TIDY_BELOW: i32 = 1;
 /// A checkpoint is written after this many placements.
 pub const CHECKPOINT_EVERY: usize = 250;
 /// A pocket smaller than this many standing cells (no way to the open ground) counts as sealed.
@@ -140,6 +140,8 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     let mut stalled = 0usize;
 
     site.terrain.sky_top = positions.iter().map(|p| p.y).max().unwrap_or(origin.1) + 1;
+    // world height of the lowest layer: bands of layers are counted from here
+    let floor = positions.iter().map(|p| p.y).min().unwrap_or(origin.1);
     let mut todo: Vec<usize> = (0..order.len()).collect();
     let mut last_pass = false;
     loop {
@@ -160,8 +162,9 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
         let b = order[i];
         let world = positions[i];
         let state = b.state_string();
-        if !last_pass && world.y > layer {
-            layer = world.y;
+        let base_y = crate::tour::band_base(world.y, floor);
+        if !last_pass && base_y > layer {
+            layer = base_y;
             let t_tidy = std::time::Instant::now();
             site.tidy(&mut rec, layer - TIDY_BELOW).map_err(|e| e.to_string())?;
             add(|_| {}, t_tidy, |t| &mut t.cleanup);
@@ -198,7 +201,11 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
                     eprintln!("y{y} {row}");
                 }
             }
-            unreachable.push((world, format!("{}/out_of_reach", b.name)));
+            if last_pass {
+                unreachable.push((world, format!("{}/out_of_reach", b.name)));
+            } else {
+                deferred.push(i);
+            }
             stalled += 1;
             if stalled >= STALL_LIMIT {
                 return Err(format!(
@@ -233,7 +240,11 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             continue;
         }
         if !within_reach(rec.feet, world) || blocks_cell(here, world) {
-            unreachable.push((world, format!("{}/out_of_reach", b.name)));
+            if last_pass {
+                unreachable.push((world, format!("{}/out_of_reach", b.name)));
+            } else {
+                deferred.push(i);
+            }
             continue;
         }
         // Click only against blocks that are really within the server's click reach (docs/RE/placement.md).
@@ -266,6 +277,10 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             add(|_| {}, t_chain, |t| &mut t.chain);
             match found {
                 Some(c) => chain = c,
+                None if !last_pass => {
+                    deferred.push(i);
+                    continue;
+                }
                 None => {
                     unreachable.push((world, format!("{}/no_support", b.name)));
                     continue;
@@ -275,6 +290,10 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
             let with_chain = |p: BlockPos| near(p) || cells.contains(&p);
             match placement::plan_clicks(&Block { pos: world, ..(*b).clone() }, |c| with_chain(c.support) && safe(c)) {
                 Action::Place(p2) if p2.clicks.iter().all(|c| c.support == world || (with_chain(c.support) && safe(c))) => pl = p2,
+                _ if !last_pass => {
+                    deferred.push(i);
+                    continue;
+                }
                 _ => {
                     unreachable.push((world, format!("{}/no_support", b.name)));
                     continue;

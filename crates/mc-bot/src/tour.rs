@@ -1,4 +1,10 @@
-//! Build order for the slicer: layer by layer, and inside a layer a nearest-neighbour tour.
+//! Build order for the slicer: a few layers at a time, tile by tile, and inside a tile layer a
+//! nearest-neighbour tour.
+//!
+//! Strict whole-layer order made the bot visit every far-apart structure once per layer, high up,
+//! bridging out to each and breaking the bridges again (most of the walking on the large factory).
+//! So the footprint is cut into [`TILE`] x [`TILE`] tiles and a band of [`BAND_LAYERS`] layers is
+//! finished in one tile before the next tile is started.
 //!
 //! The row/tile sweep of [`crate::schematic::Schematic::plan_order`] is fine for solid floors but
 //! makes the bot cross the layer again and again for sparse layers (machines, stairs, windows).
@@ -9,17 +15,31 @@ use crate::schematic::{Block, Schematic};
 use crate::world::{BlockPos, Face};
 use std::collections::{BTreeMap, HashSet};
 
+/// Layers finished in one tile before moving to the next one.
+pub const BAND_LAYERS: i32 = 4;
+/// Side length of a tile (blocks, x and z).
+pub const TILE: i32 = 16;
+
+/// The lowest layer of the band that holds height `y`, in a build whose lowest layer is `floor`.
+pub fn band_base(y: i32, floor: i32) -> i32 {
+    floor + (y - floor).div_euclid(BAND_LAYERS) * BAND_LAYERS
+}
+
 fn dist(a: BlockPos, b: BlockPos) -> i32 {
     (a.x - b.x).abs() + (a.z - b.z).abs() + 2 * (a.y - b.y).abs()
 }
 
-/// Same blocks as `plan_order`, same layer order, nearest-neighbour order inside each layer.
+/// Same blocks as `plan_order`: band by band, tile by tile (back and forth), layer by layer,
+/// nearest-neighbour order inside each tile layer.
 pub fn tour_order(schem: &Schematic) -> Vec<&Block> {
     let (base, _) = schem.plan_order();
     let (min, _) = schem.bounds();
-    let mut layers: BTreeMap<i32, Vec<&Block>> = BTreeMap::new();
+    let mut layers: BTreeMap<(i32, i32, i32, i32), Vec<&Block>> = BTreeMap::new();
     for b in base {
-        layers.entry(b.pos.y).or_default().push(b);
+        let (tx, tz) = ((b.pos.x - min.x) / TILE, (b.pos.z - min.z) / TILE);
+        // every other column of tiles runs backwards, so neighbours follow each other
+        let tz = if tx % 2 == 0 { tz } else { -tz };
+        layers.entry((band_base(b.pos.y, min.y), tx, tz, b.pos.y)).or_default().push(b);
     }
     let mut placed: HashSet<BlockPos> = HashSet::new();
     let mut out: Vec<&Block> = Vec::with_capacity(schem.blocks.len());

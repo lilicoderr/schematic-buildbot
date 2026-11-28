@@ -56,13 +56,13 @@ fn the_large_factory_is_planned_completely_within_its_limits() {
     let plan = slice::slice_with(&schem, (2, 64, 2), 767, &mut budget).expect("planned in time, simulates clean");
     assert!(plan.header.unreachable.is_empty(), "{:?}", plan.header.unreachable);
     mc_bot::sim::simulate(&plan, &schem).expect("strict simulation");
-    // walking decides the live build time: 32321 moves, 7918 scaffold breaks and 6177 s of
+    // walking decides the live build time: 21197 moves, 5498 scaffold breaks and 4058 s of
     // estimated walking when this was written (docs/PROGRESS.md); do not get worse
     let count = |f: fn(&Step) -> bool| plan.steps.iter().filter(|s| f(s)).count();
     let moves = count(|s| matches!(s, Step::Move(_)));
     let breaks = count(|s| matches!(s, Step::Break(_)));
     let walking = mc_bot::shorten::move_seconds(&plan);
-    assert!(moves <= 32_450, "{moves} moves");
-    assert!(breaks <= 8_000, "{breaks} scaffold breaks");
-    assert!(walking <= 6_220.0, "{walking:.0} s of walking");
+    assert!(moves <= 21_400, "{moves} moves");
+    assert!(breaks <= 5_600, "{breaks} scaffold breaks");
+    assert!(walking <= 4_100.0, "{walking:.0} s of walking");
 }

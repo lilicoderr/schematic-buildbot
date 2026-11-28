@@ -151,3 +151,37 @@ Newest state; older "open" notes above that concern these points are done.
   cells around the build all air. World origin 7 65 -5. Log: `scratchpad/large/run4.log` (outside the repo). The test
   server was stopped via RCON.
 
+
+
+## Update 2026-11-28: tile-and-band build order (upper-layer walking)
+
+Measured first (old plan, large factory; walking attributed to the layer being built): of about 6,180 s walking,
+4,370 s went into getting to the next block (23,123 moves) and 1,810 s into cleanup (9,191 moves). Scaffold was mostly
+bridges, not pillars: 6,720 bridge blocks against 1,030 pillars. Layers 8 to 30 had roughly 300 to 1,050 blocks each,
+in far-apart structures (the two roof slopes, trusses, stacks), but cost 480 to 1,100 approach moves per layer, so whole
+layers meant crossing between structures high up on every layer. Over the whole build: 5,341 standing spots.
+
+Change (`tour.rs`): finish a band of 4 layers inside one 16x16 tile before the next tile; scaffold more than 1 layer
+below a new band is taken down (`TIDY_BELOW`). In `slice.rs`, a block with no standing spot or support chain is now
+deferred to the last pass instead of being declared unreachable at once.
+
+| large factory, offline | before | after |
+|---|---|---|
+| moves | 32,321 | 21,197 |
+| estimated walking | 6,177 s | 4,058 s |
+| estimated total | 6,993 s | 4,721 s (-32%) |
+| standing spots | 5,341 | 4,006 |
+| bridge blocks / pillars / breaks (all) | 6,720 / 1,030 / 7,918 | 4,630 / 693 / 5,498 |
+| cleanup moves | 9,198 | 5,782 |
+
+Simulation clean, unreachable 0, no scaffold left, two plans byte-identical, 2 declared log-axis fallbacks as before.
+Small factory offline: 547 -> 468 s (-14%; moves 2,289 -> 1,968, breaks 512 -> 277).
+Small factory LIVE (vanilla 1.21.1, empty world): 539 s -> 464 s (-14%, 5.2 blocks/s), 2408/2408, 0 re-placed, 0 kicks,
+no movement warnings; `verify_rcon.py` 2407/2408 (the declared log), 83,496 cells around it all air. The large factory
+was NOT run live with this order.
+
+Cleanup is still parameter-sensitive: several other band / tile sizes ended with scaffold that could not be removed
+(the slicer then refuses the plan; in one case the leftovers appeared to be inside a closed room, not proven). On the
+large factory, 4/16 with TIDY_BELOW 0, 1 or 2, and 5/16 and 4/14 with TIDY_BELOW 1, planned fully (estimates 4,649 to
+4,921 s). A schematic that hits this needs a
+cleanup that takes scaffold out before a room closes. The test server was stopped via RCON.
