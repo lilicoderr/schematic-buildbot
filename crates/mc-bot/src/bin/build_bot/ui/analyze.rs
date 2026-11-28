@@ -81,10 +81,7 @@ fn report(id: &str, file: &str, schem: &Schematic, plan: &Plan, version: &Versio
     types.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let unsupported = build_plan::unsupported(schem);
     let mut warnings = Vec::new();
-    let floating = schem.unanchored_blocks().len();
-    if floating > 0 {
-        warnings.push(tr!("{} block(s) touch no other block and would float", "이웃이 전혀 없어 공중에 뜨는 블록 {}개", floating));
-    }
+    // blocks with no neighbour are no warning: the planner puts temporary supports under them
     let preview = plan.steps.len() <= PREVIEW_STEPS;
     if !preview {
         warnings.push(tr!("too large for the 3D preview", "3D 미리보기로 보기에는 너무 큽니다"));
