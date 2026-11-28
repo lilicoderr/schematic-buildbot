@@ -80,6 +80,36 @@ the same command run again: 2408/2408 states exact over RCON, 83,496 cells aroun
 `--origin` was checked with `stair-tower.txt` (a walk of about 20 blocks, 51/51 by the bot's own check). The online-mode,
 unsupported-version, cannot-connect and refused-login messages are tested against mock servers only.
 
+## Web page: `build-bot ui`
+
+```bash
+build-bot ui          # prints a link (with a one-time key) and opens it on Windows; Ctrl+C closes the page
+```
+
+<p align="center"><img src="docs/webui-building.png" alt="build-bot ui while building the small factory: 3D preview following the build, progress, log (headless Chromium, real page)" width="800"></p>
+
+Drop a `.schem` / `.litematic` / `.txt` on the page (or paste a direct link). It is read, planned and **simulated**
+exactly as `build` does; you see a 3D preview with a layer slider (the plan previewer, three.js 0.160.0 included in the
+program with its licence, so it works offline), size, block types, estimated time and the problems that would stop a
+build. Then enter the server address and a bot name and press **Build**: percent, blocks per second, time left, repairs
+and the log update live. **Stop** ends the build between two steps with the progress saved; **Build** again with the same
+file and server resumes. A build started here is the same `build-bot build` process as on the command line, so
+resuming also works from either side. Options: `--port N`, `--no-open`, `--state-dir D`, `--lang en|ko`.
+
+Safety: the page listens on **127.0.0.1 only** (there is no option for another address). Every request needs a random
+per-run key (it travels in the link's `#` part, which browsers never send anywhere), the `Host` and `Origin` headers must
+be this server's own (DNS rebinding and other web sites in your browser cannot use it), uploads are limited to 32 MB
+and links to http(s) with the usual 32 MB / 60 s limits, uploaded names cannot name a folder, the build is started with
+an argument list (no shell) and only after checking server address and name, and the page may load nothing from outside
+(content security policy). `crates/mc-bot/tests/webui_security.rs` attacks each of these.
+
+Checked on 2026-11-28 in headless Chromium (screenshots above and below are of the real page; no in-game screenshots):
+`factory-small.schem` loaded in the page, built on a local vanilla 1.21.1 server (127.0.0.1:25569), **stopped with the
+Stop button at about 10 %, then resumed with Build**: 2408/2408 states exact over RCON (`tools/verify_rcon.py`), 0 kicks.
+The page made no request to anything but the program itself. Not checked: other browsers, a phone, a non-loopback network.
+
+<p align="center"><img src="docs/webui-preview.png" alt="build-bot ui after loading the small factory (not in-game)" width="400"> <img src="docs/webui-stopped.png" alt="build-bot ui after Stop" width="400"></p>
+
 ## Slice, simulate, run (plan pipeline)
 
 Like a 3D-printer slicer, the bot can compile a schematic offline into a deterministic plan and replay it:

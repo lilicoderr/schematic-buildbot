@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Web page
+- `build-bot ui`: a page on this computer (127.0.0.1 only): drop a `.schem` / `.litematic` / `.txt` or paste a link,
+  3D preview with layer slider (the plan previewer, three.js 0.160.0 vendored, works offline), size, block types,
+  warnings and the simulation result, then server address, bot name and one Build button with live progress
+  (percent, blocks/s, time left, repairs, log) and a Stop button (stops between steps; Build again resumes).
+- Security: loopback only, random per-run token for every request, `Host` and `Origin` checks, strict content
+  security policy, size and time limits on uploads and downloads, no shell, fixed file table. Tests attack each.
+
 ## [0.2.0] - 2026-11-28
 
 ### One command
