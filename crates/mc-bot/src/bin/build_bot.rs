@@ -18,9 +18,9 @@ use mc_bot::scaffold::Site;
 use mc_bot::schematic::{Block, Schematic};
 use mc_bot::version::{self, Version};
 use mc_bot::world::BlockPos;
-use mc_bot::{blocks, i18n, litematic, schem, tr};
+use mc_bot::{blocks, fetch, i18n, tr};
 use std::collections::{BTreeMap, HashSet};
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -194,34 +194,12 @@ fn main() {
     }
 }
 
-/// Load a blueprint from a local file or an http(s) URL. Format is picked by extension,
-/// falling back to sniffing: gzip NBT is a schematic, anything else is the text format.
-/// Paste a direct `.schem` link from a sharing site and it downloads and builds.
+/// Load a blueprint from a local file or an http(s) URL ([`mc_bot::fetch`]).
 pub(crate) fn load_schematic(src: &str) -> Result<Schematic, String> {
-    let path_part = src.split(['?', '#']).next().unwrap_or(src);
-    let name = path_part.rsplit(['/', '\\']).next().unwrap_or("blueprint").to_string();
-    let bytes: Vec<u8> = if src.starts_with("http://") || src.starts_with("https://") {
+    if src.contains("://") {
         eprintln!("{}", tr!("downloading: {}", "다운로드: {}", src));
-        let resp = ureq::get(src).call().map_err(|e| format!("HTTP: {e}"))?;
-        let mut buf = Vec::new();
-        resp.into_reader().read_to_end(&mut buf).map_err(|e| tr!("read: {}", "읽기: {}", e))?;
-        buf
-    } else {
-        std::fs::read(src).map_err(|e| e.to_string())?
-    };
-
-    let ext = path_part.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    let gzip = bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
-    match ext.as_str() {
-        "litematic" => litematic::parse(&bytes, &name),
-        "schem" | "schematic" => schem::parse(&bytes, &name),
-        _ if gzip => schem::parse(&bytes, &name).or_else(|e| litematic::parse(&bytes, &name).map_err(|_| e)),
-        _ => {
-            let text = String::from_utf8(bytes)
-                .map_err(|_| tr!("the text blueprint is not valid UTF-8", "텍스트 설계도가 UTF-8 이 아닙니다."))?;
-            Schematic::parse(&text)
-        }
     }
+    fetch::parse(&fetch::fetch(src)?)
 }
 
 /// Simulate placement offline: which requested states can be honoured?
