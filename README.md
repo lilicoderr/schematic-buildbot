@@ -89,24 +89,27 @@ Neighbour-derived block states (stair shape, fence and pane connections) cannot 
 
 <p align="center"><sub><b>prismarine-viewer renders of the live world</b> after the build, not Minecraft client screenshots (<code>tools/viewer/capture.js</code>)</sub></p>
 
-`blueprints/factory-large.schem` (22,481 blocks, 54,764 plan steps), built by `build-bot run --verify` on a local vanilla
-1.21.1 server (creative, offline, 2 GB heap, 2026-11-28), from an empty world, **in one run with no resume**, with no
-viewer or other player connected. (The renders above are of an earlier build of the same schematic.)
+`blueprints/factory-large.schem` (22,481 blocks, 54,780 plan steps), built by `build-bot run --verify` on a local vanilla
+1.21.1 server (creative, offline, 2 GB heap, default gamerules, 2026-11-28), from an empty world, **in one run with no
+resume**, with no viewer or other player connected. (The renders above are of an earlier build of the same schematic.)
 
-* 22,481 / 22,481 placed, 4,685 s (1 h 18 min), **4.8 blocks/s**, 0 kicks, 0 refused, nothing missing.
-  Walking took 4,000 s of it (21,197 moves; the slicer estimated 4,058 s walking, 4,721 s total). Early flat layers
-  often run at 15 to 26 blocks/s, the sparse upper layers mostly at 2 to 10.
-* The previous clean run, with the older layer-by-layer build order, took 6,898 s (3.3 blocks/s, 32,321 moves). Finishing
-  4 layers per 16x16 tile cut the time by 32%.
+* 22,481 / 22,481 placed, 4,646 s (1 h 17 min), **4.8 blocks/s**, 0 kicks, 0 refused, nothing missing, no lag or
+  movement warning in the server log. Walking took 3,979 s of it (21,197 moves; the slicer estimated 4,058 s walking,
+  4,721 s total). Early flat layers often run at 15 to 26 blocks/s, the sparse upper layers mostly at 2 to 10.
 * The run checks every step and every block change the server reports against the exact planned state, and repairs
-  at once. It did so once, for a `copper_block` that vanilla had aged to `exposed_copper`.
-* Independent check over RCON (`tools/verify_rcon.py`): **22,475 / 22,481 states exact (99.97%)**. The 6 others are
-  `stripped_dark_oak_log` axes the slicer declares as fallbacks before the run. This is worse than the older order, which
-  had 2 (22,479 exact). All 37 copper blocks were unaged at the time of the check (copper keeps ageing afterwards).
-* Leftover scaffold: 721,018 cells around the build that are not in the schematic were queried; all are air.
-* Since this run the 6 fallbacks are fixed in the planner (temporary blocks): the large plan now simulates with 0
-  fallbacks at the same estimate. **The large factory has not been rebuilt live since**; the small one has
-  (464 s, 2408 / 2408 exact over RCON, all 83,496 surrounding cells air).
+  at once. This run needed **no repair**, and its final report lists 0 differing states.
+* Independent check over RCON (`tools/verify_rcon.py`): **22,481 / 22,481 states exact**. It ran about a minute after
+  the build, after a restart of the test server on the saved world (the wrapper script that was to call it failed on
+  the console text encoding). Nothing was built or changed in between.
+* Leftover scaffold: 721,018 cells around the build that are not in the schematic (16 blocks to each side and 8 above,
+  from the ground up) were queried; all are air.
+* Copper: all 37 `copper_block`s were unaged at the time of the check. `randomTickSpeed` was left at the default 3, so
+  this is a point-in-time result: vanilla keeps ageing unwaxed copper. In earlier runs, copper that aged during the
+  build was seen and placed again by the same checks; nothing keeps it unaged after the bot has left.
+* This is one run on one schematic, one server version and a flat world; it is not a guarantee for other builds.
+* History with this schematic: 6,898 s with the older layer-by-layer order (22,479 exact), then 4,685 s with the
+  4-layers-per-16x16-tile order (22,475 exact, 6 declared log-axis fallbacks). The planner has since removed those
+  fallbacks with temporary blocks.
 
 An earlier build the same day, also with the older order, needed two resumes (7,338 s active, 3.1 blocks/s). It exposed a planner bug (a slab clicked
 onto an equal slab) and a walk-only way back after repairs; both are fixed. Its checkpoints only counted non-air blocks, so

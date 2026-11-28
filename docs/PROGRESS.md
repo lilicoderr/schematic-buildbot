@@ -235,3 +235,29 @@ deterministic. Small factory LIVE (vanilla 1.21.1, empty world): 464 s, 2408/240
 warnings; `verify_rcon.py` 2408/2408 exact, 83,496 cells around it all air. World origin 3 65 8. Log:
 `scratchpad/axisfix/small-run.log` (outside the repo). The test server was stopped via RCON. The large factory was NOT
 rebuilt live. This closes the "4 extra log-axis fallbacks" item above.
+
+
+## Update 2026-11-28: large factory live, exact (22,481 / 22,481)
+
+Newest state. Code df859e8 (planner of 48ee50e, no code change in this update; CI for df859e8 green). Vanilla 1.21.1,
+2 GB, below-normal priority, test world deleted first, ONE run of `run large.bbplan 127.0.0.1:25566 --verify`, no
+resume, no viewer: 14:34:20 to 15:51:46, 54,780 steps.
+
+* 22,481 placed, 0 refused, 0 missing, 4,646 s (4.8 blocks/s), 21,197 moves, walking 3,979 s (offline estimate 4,721 /
+  4,058 s), pillar / support / place / break 130 / 72 / 339 / 93 s. 0 kicks, all 90 checkpoints 0 re-placed, no
+  extra scaffold, no resync, 0 "server-reported states differ". No "moved too quickly" / "moved wrongly" /
+  "Can't keep up" in the test server log.
+* `verify_rcon.py`: 22,481 / 22,481 exact. Surroundings: 721,018 non-schematic cells, 0 not air (box from y=65 up, so
+  the ground below is not checked). Copper: 37 / 37 `copper_block`. World origin -3 65 -8.
+* The scratch wrapper crashed when it read the verifier's output (piped Python prints the Korean user path in cp949, read
+  as UTF-8) and stopped the test server. The server was restarted on the saved world (no reset, no bot) and checked
+  about a minute after the build, with `PYTHONIOENCODING=utf-8`.
+* Gamerules unchanged (`randomTickSpeed` 3). Copper: the checks treat an aged block as a wrong block and place it again
+  (seen in earlier runs; this run had none to repair). Copper judged at the final audit can still age afterwards, so
+  for a repeatable exact check of a test build `randomTickSpeed 0` would be the option; not needed or used here.
+* Refit / temporary-aim live repair and `--resume` were not exercised (nothing needed them). No new renders (same
+  schematic). Logs (outside the repo): `scratchpad/livefinal/run.log`, `verify.log`. Test server stopped via RCON.
+
+This supersedes the "large factory was NOT rebuilt live" note above. Still open: 5 blocks/s on the large factory; the
+unexplained checkpoint 11 re-places of the oldest run (not seen since).
+
