@@ -34,6 +34,7 @@ pub mod run_state;
 pub mod scaffold;
 pub mod schem;
 pub mod shapes;
+pub mod shorten;
 pub mod sim;
 pub mod sim_rules;
 pub mod state_ids;

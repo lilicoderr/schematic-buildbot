@@ -346,6 +346,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     plan.header.start = start;
     plan.header.protocol = protocol;
     plan.header.unreachable = unreachable;
+    crate::shorten::shorten(&mut plan);
     crate::slice_stats::fill(&mut plan, schem.blocks.len(), deviations);
     plan.header.stats.push(("state_neighbour_derived".into(), crate::slice_stats::neighbour_derived(schem).to_string()));
     crate::slice_stats::fill_mismatches(&mut plan);

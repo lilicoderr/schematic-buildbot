@@ -27,6 +27,33 @@ pub fn advance(from: Vec3, path: &[Vec3], next: &mut usize, step: f64) -> Vec3 {
     at
 }
 
+/// Feet height above the take-off surface on ticks 1..=3 of a vanilla jump (0.42 initial velocity).
+pub const JUMP_ARC: [f64; 3] = [0.42, 0.7532, 1.0013];
+/// How far the player can drift from a cell centre before its 0.6 wide box enters the next cell.
+const EDGE_ROOM: f64 = 0.2;
+
+/// The airborne positions, one per tick, of a jump from the cell centre `from` up one block onto
+/// the neighbouring cell centre `to`. Like a vanilla jump it drifts while rising, but never into
+/// the target column before the feet are above its block; at the top it moves on at `stride`.
+pub fn jump_ticks(from: Vec3, to: Vec3, stride: f64) -> Vec<Vec3> {
+    let (dx, dz) = (to.x - from.x, to.z - from.z);
+    let dist = dx.hypot(dz).max(1e-9);
+    let at = |gone: f64, y: f64| Vec3::new(from.x + dx / dist * gone, y, from.z + dz / dist * gone);
+    let mut out = Vec::new();
+    let mut gone = 0.0;
+    for (k, rise) in JUMP_ARC.into_iter().enumerate() {
+        let limit = if k + 1 < JUMP_ARC.len() { EDGE_ROOM.min(dist) } else { dist };
+        let share = if k + 1 < JUMP_ARC.len() { EDGE_ROOM / (JUMP_ARC.len() - 1) as f64 } else { stride };
+        gone = (gone + share).min(limit);
+        out.push(at(gone, from.y + rise));
+    }
+    while dist - gone > 1e-9 {
+        gone = (gone + stride).min(dist);
+        out.push(at(gone, from.y + JUMP_ARC[JUMP_ARC.len() - 1]));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,6 +77,22 @@ mod tests {
         }
         assert_eq!(ticks, (4.0 / WALK_STEP).ceil() as i32, "no time lost at the cells in between");
         assert!((at.x - 2.5).abs() < 1e-9 && (at.z - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_jump_drifts_while_rising_without_entering_the_block_or_speeding() {
+        let (from, to) = (p(0.5, 0.5), Vec3::new(1.5, 66.0, 0.5));
+        let ticks = jump_ticks(from, to, SPRINT_STEP);
+        assert_eq!(ticks.len(), 5, "5 ticks in the air plus the landing: {ticks:?}");
+        let mut last = from;
+        for t in &ticks {
+            assert!(last.horiz_dist(*t) <= SPRINT_STEP + 1e-9, "no speeding");
+            // the box reaches 0.3 ahead; the block fills x 1..2 below y 66
+            assert!(t.x + 0.3 <= 1.0 + 1e-9 || t.y >= 66.0, "{t:?} is inside the block");
+            last = *t;
+        }
+        assert!((last.x - to.x).abs() < 1e-9 && last.y > to.y);
+        assert_eq!(jump_ticks(from, to, WALK_STEP).len(), 6);
     }
 
     #[test]

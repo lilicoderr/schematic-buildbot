@@ -1,6 +1,7 @@
 //! Planner performance: time must grow about linearly with the structure, and the large factory
 //! must stay inside its limits.
 
+use mc_bot::plan::Step;
 use mc_bot::schematic::{Block, Schematic};
 use mc_bot::world::BlockPos;
 use mc_bot::{guard::Budget, slice};
@@ -54,4 +55,14 @@ fn the_large_factory_is_planned_completely_within_its_limits() {
     let mut budget = Budget::new(Duration::from_secs(120), 2048 << 20);
     let plan = slice::slice_with(&schem, (2, 64, 2), 767, &mut budget).expect("planned in time, simulates clean");
     assert!(plan.header.unreachable.is_empty(), "{:?}", plan.header.unreachable);
+    mc_bot::sim::simulate(&plan, &schem).expect("strict simulation");
+    // walking decides the live build time: 32321 moves, 7918 scaffold breaks and 6177 s of
+    // estimated walking when this was written (docs/PROGRESS.md); do not get worse
+    let count = |f: fn(&Step) -> bool| plan.steps.iter().filter(|s| f(s)).count();
+    let moves = count(|s| matches!(s, Step::Move(_)));
+    let breaks = count(|s| matches!(s, Step::Break(_)));
+    let walking = mc_bot::shorten::move_seconds(&plan);
+    assert!(moves <= 32_450, "{moves} moves");
+    assert!(breaks <= 8_000, "{breaks} scaffold breaks");
+    assert!(walking <= 6_220.0, "{walking:.0} s of walking");
 }

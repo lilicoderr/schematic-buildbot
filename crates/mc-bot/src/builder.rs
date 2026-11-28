@@ -9,7 +9,7 @@
 
 use crate::blocklog::{self, BlockLog};
 use crate::codec::{self, PlayerAction};
-use crate::motion::{self, SPRINT_STEP, WALK_STEP};
+use crate::motion::{self, JUMP_ARC, SPRINT_STEP, WALK_STEP};
 use crate::nav::{cell_feet, Cell};
 use crate::net::Connection;
 use crate::placement::Plan;
@@ -21,8 +21,6 @@ use mc_proto::buf::PacketBuf;
 use std::io;
 use std::time::{Duration, Instant};
 
-/// Feet height above the take-off surface on ticks 1..=3 of a vanilla jump (0.42 initial velocity).
-const JUMP_ARC: [f64; 3] = [0.42, 0.7532, 1.0013];
 /// Fall distance per tick while dropping off an edge.
 const FALL_STEP: f64 = 0.5;
 const TICK: Duration = Duration::from_millis(50);
@@ -363,23 +361,14 @@ impl PlayClient {
         Ok(())
     }
 
-    /// Jump straight up the vanilla arc, glide over the edge at jump height, land on `target`.
+    /// Jump the vanilla arc ([`motion::jump_ticks`]) onto `target`, one block up and one over.
     fn jump_to(&mut self, target: Vec3) -> io::Result<()> {
-        let (base, teleports) = (self.feet.y, self.teleports);
-        for rise in JUMP_ARC {
-            if self.teleports != teleports {
-                return Ok(());
-            }
-            self.feet.y = base + rise;
-            self.send_pos(false)?;
-            self.tick()?;
-        }
-        let hold = Vec3::new(target.x, self.feet.y, target.z);
-        for _ in 0..40 {
-            if self.feet.horiz_dist(hold) <= 0.05 || self.kicked.is_some() || self.teleports != teleports {
+        let teleports = self.teleports;
+        for at in motion::jump_ticks(self.feet, target, self.stride) {
+            if self.kicked.is_some() || self.teleports != teleports {
                 break;
             }
-            self.feet = motion::advance(self.feet, &[hold], &mut 0, self.stride);
+            self.feet = at;
             self.send_pos(false)?;
             self.tick()?;
         }

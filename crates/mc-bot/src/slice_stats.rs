@@ -4,11 +4,9 @@ use crate::plan::{Plan, Step};
 use crate::schematic::Block;
 use std::collections::BTreeMap;
 
-/// Seconds per walk step (0.21 blocks/tick at 20 Hz), jump, pillar block, placement.
-const T_STEP: f64 = 0.25;
-const T_JUMP: f64 = 0.4;
+/// Seconds per pillar block or scaffold break, and per placement.
 const T_PILLAR: f64 = 0.35;
-const T_PLACE: f64 = 0.06;
+const T_PLACE: f64 = 0.015;
 
 /// Blocks whose requested state is derived by the server from the neighbours (stair shape, fence /
 /// pane / wall connections, docs/RE/block_states.md): the plan cannot choose it, only the build
@@ -100,7 +98,8 @@ pub fn fill(plan: &mut Plan, schematic_blocks: usize, unhonoured: usize) {
             _ => {}
         }
     }
-    let est = moves as f64 * T_STEP + jumps as f64 * T_JUMP + (pillars + breaks) as f64 * T_PILLAR + places as f64 * T_PLACE;
+    let walking = crate::shorten::move_seconds(plan);
+    let est = walking + pillars as f64 * T_PILLAR + (places + breaks) as f64 * T_PLACE;
     let mut put = |k: &str, v: String| plan.header.stats.push((k.to_string(), v));
     put("blocks", schematic_blocks.to_string());
     put("placements", places.to_string());
@@ -110,5 +109,6 @@ pub fn fill(plan: &mut Plan, schematic_blocks: usize, unhonoured: usize) {
     put("scaffold_breaks", breaks.to_string());
     put("unreachable", plan.header.unreachable.len().to_string());
     put("default_state_fallbacks", unhonoured.to_string());
+    put("est_move_seconds", format!("{walking:.0}"));
     put("est_seconds", format!("{est:.0}"));
 }
