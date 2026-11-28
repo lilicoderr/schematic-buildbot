@@ -12,7 +12,8 @@ use mc_bot::nav::{feet_cell, Terrain};
 use mc_bot::plan::Plan;
 use mc_bot::scaffold::Site;
 use mc_bot::version::Version;
-use mc_bot::{fetch, guard, preflight, run_state, tr, version};
+use mc_bot::world::BlockPos;
+use mc_bot::{fetch, guard, preflight, run_state, site_check, survey, tr, version};
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -160,12 +161,13 @@ fn online(args: &Args, job: &Job, plan: &Plan, version: &Version, clean: bool) -
     if !args.walk {
         bot.set_sprint(true).map_err(io)?;
     }
+    let keep = site_survey(&mut bot, args, job, plan, offset, saved.map(|s| s.step))?;
     let at = offset.pos(mc_bot::world::BlockPos::new(plan.header.origin.0, plan.header.origin.1, plan.header.origin.2));
     println!("{}", tr!("blueprint origin in the world: {},{},{}", "설계도 원점(월드 좌표): {},{},{}", at.x, at.y, at.z));
     if from_step > 0 {
         println!("{}", tr!("resuming after step {} of {}", "{}단계 다음부터 이어서 건축 (전체 {}단계)", from_step, plan.steps.len()));
     }
-    let opts = exec::Opts { verify: true, from_step, offset: Some(offset), extras_file: Some(job.extras()), refit: Vec::new() };
+    let opts = exec::Opts { verify: true, from_step, offset: Some(offset), extras_file: Some(job.extras()), refit: Vec::new(), keep };
     let total = plan.steps.len();
     let mut shown = from_step * 20 / total.max(1);
     let mut link = mc_bot::ui_link::Reporter::start(plan, from_step);
@@ -186,6 +188,37 @@ fn online(args: &Args, job: &Job, plan: &Plan, version: &Version, clean: bool) -
     })?;
     super::run_cmd::report(plan, &report, bot.teleports);
     conclude(args, job, plan, &report, clean, &resume_hint)
+}
+
+/// Read the loaded chunks around the build and stop if it would run into existing blocks.
+/// Returns the blocks beside the build that must never be touched.
+fn site_survey(bot: &mut PlayClient, args: &Args, job: &Job, plan: &Plan, off: Offset, saved: Option<usize>) -> Result<HashSet<BlockPos>, String> {
+    let extras: Vec<(i32, i32, i32)> = std::fs::read_to_string(job.extras()).unwrap_or_default().lines().filter_map(|l| {
+        let mut v = l.split_whitespace().filter_map(|n| n.parse().ok());
+        Some((v.next()?, v.next()?, v.next()?))
+    }).collect();
+    let area = survey::area(plan, off, saved, &extras)?;
+    let found = site_check::check(bot, &area, site_check::CHUNK_WAIT).map_err(|e| e.to_string())?;
+    if bot.chunks.unreadable > 0 {
+        println!("{}", tr!("{} chunk packet(s) could not be decoded", "해독하지 못한 청크 패킷 {}개", bot.chunks.unreadable));
+    }
+    if found.is_clear() {
+        println!("{}", tr!("site survey: clear", "부지 조사: 이상 없음"));
+        return Ok(found.keep);
+    }
+    for line in found.report(&area) {
+        println!("{line}");
+    }
+    if !args.force {
+        return Err(tr!(
+            "the site is not clear, so nothing was built.
+  -> Pick another place with --origin, clear the blocks listed above, or add --force to build anyway (blocks inside the build area are then overwritten).",
+            "부지가 비어 있지 않아 건축하지 않았습니다.
+  -> --origin 으로 다른 곳을 고르거나 위에 나온 블록을 치우세요. 그래도 지으려면 --force 를 붙이세요 (건축 영역 안의 블록은 덮어씁니다)."
+        ));
+    }
+    println!("{}", tr!("--force: building anyway", "--force: 그래도 건축합니다"));
+    Ok(found.keep)
 }
 
 fn conclude(args: &Args, job: &Job, plan: &Plan, report: &Report, clean: bool, resume_hint: &str) -> Result<(), String> {

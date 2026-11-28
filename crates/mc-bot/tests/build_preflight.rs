@@ -201,6 +201,7 @@ fn builds_after_the_switch_to_creative_resumes_after_a_kick_and_remembers_the_en
         let mut p = Peer::in_play(&l);
         play_login(&mut p, 0);
         p.teleport(SPAWN, 1);
+        p.flat_world(SPAWN.1 - 1, &[]);
         game_mode_event(&mut p, 1); // the operator runs the command while the bot waits
         serve_play(p, 5)
     });
@@ -215,6 +216,7 @@ fn builds_after_the_switch_to_creative_resumes_after_a_kick_and_remembers_the_en
         let mut p = Peer::in_play(&l2);
         play_login(&mut p, 1);
         p.teleport(SPAWN, 1);
+        p.flat_world(SPAWN.1 - 1, &[]);
         serve_play(p, 0)
     });
     let (ok, out) = dir.build(&addr, &["--delay-ms", "2"]);
@@ -239,4 +241,38 @@ fn dry_run_never_connects() {
     assert!(ok && out.contains("estimated time") && out.contains("unsupported blocks: 0"), "{out}");
     assert!(l.accept().is_err(), "nothing connected");
     assert!(!dir.0.join(".buildbot").exists(), "a dry run writes nothing");
+}
+
+/// Serve a build on a flat world with `planks` standing at `at`; returns (success, output, placements).
+fn build_with_obstacle(test: &str, at: (i32, i32, i32), extra: &[&str]) -> (bool, String, usize) {
+    let dir = Dir::new(test);
+    let (l, addr) = listen();
+    let planks = mc_bot::state_ids::state_id("oak_planks", &Default::default()).unwrap();
+    let server = thread::spawn(move || {
+        answer_status(&l, 767);
+        let mut p = Peer::in_play(&l);
+        play_login(&mut p, 1);
+        p.teleport(SPAWN, 1);
+        p.flat_world(SPAWN.1 - 1, &[(at, planks)]);
+        serve_play(p, 0)
+    });
+    let mut args = vec!["--delay-ms", "2"];
+    args.extend_from_slice(extra);
+    let (ok, out) = dir.build(&addr, &args);
+    (ok, out, server.join().unwrap())
+}
+
+#[test]
+fn the_survey_refuses_a_site_with_somebodys_blocks_and_force_overrides() {
+    // blueprint (0,0,0) lands on (12,65,12): a wall cell
+    let (ok, out, placed) = build_with_obstacle("survey-in", (12, 65, 12), &[]);
+    assert!(!ok && placed == 0, "{out}");
+    assert!(out.contains("site survey") && out.contains("oak_planks") && out.contains("--force") && out.contains("12,65,12"), "{out}");
+    // a block beside the build, inside the margin, also stops it; farther away it does not matter
+    let (ok, out, placed) = build_with_obstacle("survey-near", (15, 65, 12), &[]);
+    assert!(!ok && placed == 0 && out.contains("non-natural"), "{out}");
+    let (ok, out, placed) = build_with_obstacle("survey-far", (20, 65, 12), &[]);
+    assert!(ok && placed > 0 && out.contains("site survey: clear"), "{out}");
+    let (_, out, placed) = build_with_obstacle("survey-force", (12, 65, 12), &["--force"]);
+    assert!(placed > 0 && out.contains("--force: building anyway"), "{out}");
 }

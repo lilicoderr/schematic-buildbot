@@ -17,6 +17,8 @@ pub struct Args {
     pub allow_partial: bool,
     pub fresh: bool,
     pub walk: bool,
+    /// Build although the site survey found blocks in the way.
+    pub force: bool,
     pub state_dir: PathBuf,
     pub wait_creative: Duration,
     pub delay: Duration,
@@ -35,6 +37,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         allow_partial: false,
         fresh: false,
         walk: false,
+        force: false,
         state_dir: PathBuf::from(".buildbot"),
         wait_creative: Duration::from_secs(120),
         delay: Duration::from_millis(10),
@@ -53,6 +56,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             "--allow-partial" => a.allow_partial = true,
             "--fresh" => a.fresh = true,
             "--walk" => a.walk = true,
+            "--force" => a.force = true,
             // accepted for symmetry with `run`; `build` always verifies
             "--verify" => {}
             flag => {
@@ -99,8 +103,8 @@ fn parse_origin(s: &str) -> Result<(i32, i32, i32), String> {
 
 pub fn usage() -> String {
     tr!(
-        "usage: build-bot build <schematic file or URL> <host:port> [--name N] [--origin x,y,z] [--lang en|ko] [--dry-run]\n  more: --version V --fresh --allow-partial --wait-creative SECONDS --delay-ms N --walk --state-dir DIR",
-        "사용법: build-bot build <설계도 파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--lang en|ko] [--dry-run]\n  추가: --version V --fresh --allow-partial --wait-creative 초 --delay-ms N --walk --state-dir 폴더"
+        "usage: build-bot build <schematic file or URL> <host:port> [--name N] [--origin x,y,z] [--lang en|ko] [--dry-run]\n  more: --version V --fresh --allow-partial --wait-creative SECONDS --delay-ms N --walk --force --state-dir DIR",
+        "사용법: build-bot build <설계도 파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--lang en|ko] [--dry-run]\n  추가: --version V --fresh --allow-partial --wait-creative 초 --delay-ms N --walk --force --state-dir 폴더"
     )
 }
 

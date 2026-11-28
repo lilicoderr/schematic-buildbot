@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 /// Block name and properties of a state id of the release described by `tables`. A block with the
 /// same number of states as in 1.21.1 has the same layout (compared in the reports of 1.20.4,
 /// 1.21.4 and 26.3); otherwise, and for blocks 1.21.1 lacks, only the name is known.
-fn decode(tables: &Tables, id: u32) -> Option<(&'static str, BTreeMap<String, String>)> {
+pub(crate) fn decode(tables: &Tables, id: u32) -> Option<(&'static str, BTreeMap<String, String>)> {
     let name = tables.block_of_state(id)?;
     let find = |t: &Tables| t.blocks.iter().find(|b| b.0 == name).map(|b| (b.1, b.3));
     let (first, count) = find(tables)?;

@@ -18,6 +18,7 @@ use crate::plan::{Plan, Step};
 use crate::schematic::{split_state, Block};
 use crate::sim::{self, World};
 use crate::world::BlockPos;
+use std::collections::HashSet;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -55,6 +56,9 @@ pub struct Opts {
     pub extras_file: Option<std::path::PathBuf>,
     /// Plan positions to break and place again after the last step (blocks known to be wrong).
     pub refit: Vec<BlockPos>,
+    /// World positions that were occupied before the build and are not part of it; the repair
+    /// leaves them alone.
+    pub keep: HashSet<BlockPos>,
 }
 
 /// Pitch and sneak are not stored in the plan: they follow from the wanted state alone.
@@ -104,6 +108,7 @@ pub fn run(
     let off = opts.offset.unwrap_or_else(|| Offset::between(plan.header.start, feet_cell(bot.feet)));
     let mut world = World::new(plan.header.origin.1, plan.header.start);
     let mut ledger = Ledger::new(plan, off);
+    ledger.keep = opts.keep.clone();
     let mut rep = Report::default();
     let started = Instant::now();
     let (mut window_start, mut window_n) = (Instant::now(), 0usize);
