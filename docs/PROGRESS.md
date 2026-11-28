@@ -122,3 +122,32 @@ a wrong block type, not only air, as missing. The fixed planner has not been run
 (session 2: 2,439 s of 2,981 s moving). Renders in `docs/live-factory/` come from `tools/viewer/capture.js` (prismarine-viewer,
 spectator, after the build); the "Screenshots (not done)" and "Large factory: NOT run live" notes above are out of date.
 The test server was stopped via RCON afterwards.
+
+
+## Update 2026-11-28 (later): exact-state checks, movement, one clean large-factory run
+
+Newest state; older "open" notes above that concern these points are done.
+
+* `run` (`audit.rs`, `ledger.rs`, `refit.rs`, `exec_repair::heal`): expected state = plan state with stair shape /
+  connections / lone chest half recomputed from the blocks standing now. A position is judged when `block_changed_ack`
+  (new packet id `cb_play_block_changed_ack`) covers the clicks sent before it was marked (3 s fallback if a server never
+  acks, 30 s otherwise). Wrong = missing, other block, stray inside the plan box +2, or a placement-controlled property
+  not declared as fallback; other differences are only reported. Max 3 repairs per position. Tests:
+  `tests/exact_states_mock.rs` (wrong block, slab merge, neighbour change, stray), `tests/run_mock.rs`, shared `tests/mock`.
+* Checkpoint 11 of the old run (4 re-places): segment 11 is 250 plain `gray_concrete`, no slab merge, no server lag or
+  movement warning in the server log. Replaying the old plan up to CHECKPOINT 11 on a fresh server with the new build:
+  2750/2750, 0 repairs, 0 diffs. NOT reproduced, cause unknown (old logs have no positions). One unproven candidate: the
+  old code judged after a fixed 300 ms without waiting for the server; the new one waits for the ack and logs positions.
+* Movement (offline, large factory): 32,405 -> 32,321 moves; estimated walking 6,542 s (old 8-tick jumps) -> 6,177 s,
+  mostly from 6-tick jumps (`motion::jump_ticks`) over 3,494 jumps; `shorten.rs` saves 84 moves. Scaffold unchanged
+  (1,030 pillars, 7,918 breaks). Limits in `tests/slice_scaling.rs`. Tried and rejected (more moves, or scaffold left
+  standing): strip / hole-avoiding tour, count-all standing score, time-weighted standing search, other LOOKAHEAD,
+  WINDOW, SLACK, TIDY_BELOW, band height and bridge / pillar costs. A real gain needs less scaffold: 7,056 moves lead to
+  a BREAK and 4,607 to a SUPPORT; the cleanup is fragile when parameters change.
+* Live, small factory with this build: 2408/2408, 539 s (was 567 s), 0 re-placed, 0 kicks, 1 diff (declared fallback).
+* Live, large factory, ONE run from an empty world, no resume, no viewer: 10:13:48 to 12:08:46, 22,481/22,481, 6,898 s,
+  3.3 blocks/s, walking 6,076 s, 0 kicks, 2 repairs (aged copper), no "moved too quickly" or "Can't keep up" in the
+  server log. `verify_rcon.py`: 22,479/22,481 (2 declared log-axis fallbacks), 37/37 copper unaged at check time, 721,018
+  cells around the build all air. World origin 7 65 -5. Log: `scratchpad\largeun4.log` (outside the repo). The test
+  server was stopped via RCON.
+

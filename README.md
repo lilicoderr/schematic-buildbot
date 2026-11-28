@@ -55,9 +55,9 @@ Like a 3D-printer slicer, the bot can compile a schematic offline into a determi
 ```text
  schematic ──slice──▶ plan.bbplan ──simulate──▶ legal? ──run──▶ server
  (.schem/.litematic)  (text steps:       (every step checked   (replay, confirm each
-                       MOVE PILLAR        in an in-memory       PLACE by block update,
-                       SUPPORT PLACE      world, final world    re-place misses at
-                       BREAK CHECKPOINT)  == schematic)         every CHECKPOINT)
+                       MOVE PILLAR        in an in-memory       step against the
+                       SUPPORT PLACE      world, final world    exact block states,
+                       BREAK CHECKPOINT)  == schematic)         repair at once)
 ```
 
 ```bash
@@ -65,6 +65,12 @@ build-bot slice castle.schem -o castle.bbplan          # offline, no server; ref
 build-bot simulate castle.bbplan castle.schem          # re-check every step
 build-bot run castle.bbplan 127.0.0.1:25566 --verify   # replay on a server
 ```
+
+While running, every position a step touched, and every other block change the server reports (neighbour updates, slabs
+that merged, stray blocks), is compared with the state the plan wants there at that moment, as soon as the server has
+acknowledged the clicks. Wrong, missing or stray blocks are broken and placed again in plan order (at most 3 times per
+position); every `CHECKPOINT` audits all known positions again. Connections and stair shapes that placing again cannot
+change are only reported.
 
 The plan format is in [docs/PLAN_FORMAT.md](docs/PLAN_FORMAT.md). The bot stays on the ground: high spots are reached by
 jumping up one block, by temporary scaffold pillars (jump, place under the feet, land) or scaffold bridges, and every scaffold
@@ -83,25 +89,24 @@ Neighbour-derived block states (stair shape, fence and pane connections) cannot 
 
 <p align="center"><sub><b>prismarine-viewer renders of the live world</b> after the build, not Minecraft client screenshots (<code>tools/viewer/capture.js</code>)</sub></p>
 
-`blueprints/factory-large.schem`, built by `build-bot run` on a local vanilla 1.21.1 server (creative, offline, 2 GB heap,
-2026-11-28). **It was not one clean run:** it stopped once, the code was fixed, and the same plan was resumed twice.
+`blueprints/factory-large.schem` (22,481 blocks, 70,728 plan steps), built by `build-bot run --verify` on a local vanilla
+1.21.1 server (creative, offline, 2 GB heap, 2026-11-28), from an empty world, **in one run with no resume**, with no
+viewer or other player connected. (The renders above are of an earlier build of the same schematic.)
 
-| Session | Placements | Time | What happened |
-|---|---|---|---|
-| 1 | 15,250 | 4,287 s | aborted: a checkpoint repair could not get back to its planned position |
-| 2 (`--resume --refit`) | 7,231 | 2,981 s | finished all 70,794 plan steps; 6 blocks still wrong (three swapped pairs) |
-| 3 (`--resume --refit`) | 6 broken and placed again | 70 s | the bot's own diff: 0 |
-
-* Total in the three sessions: 7,338 s (2 h 2 min), **3.1 blocks/s** overall (fixes between sessions not counted). 0 kicks.
-* Checkpoint repair placed 13 blocks again (4 at checkpoint 11, cause not determined; the other 9 from the slab bug below,
-  one of them in the repair that failed and printed no count).
-* Independent check over RCON (`tools/verify_rcon.py`): **22,475 / 22,481 states exact (99.97%)**. The 6 others: 4
-  `copper_block` that vanilla aged to `exposed_copper`, and 2 log axes the slicer had declared as fallbacks.
+* 22,481 / 22,481 placed, 6,898 s (1 h 55 min), **3.3 blocks/s**, 0 kicks, 0 refused, nothing missing.
+  Walking took 6,076 s of it (32,321 moves; the slicer estimated 6,177 s). Early flat layers run at about 19 blocks/s,
+  the sparse upper layers at 2 to 9.
+* The run checks every step and every block change the server reports against the exact planned state, and repairs
+  at once. It did so twice, both times for a `copper_block` that vanilla had aged to `exposed_copper`.
+* Independent check over RCON (`tools/verify_rcon.py`): **22,479 / 22,481 states exact (99.99%)**. The 2 others are
+  `stripped_dark_oak_log` axes the slicer declares as fallbacks before the run. All 37 copper blocks were unaged at the
+  time of the check (copper keeps ageing afterwards).
 * Leftover scaffold: 721,018 cells around the build that are not in the schematic were queried; all are air.
-* Two bugs found by this run, both fixed with regression tests: (1) the planner clicked a slab onto the top of an equal
-  slab, which makes a double slab and leaves the target empty (this also led to the swapped pairs); (2) the way back after
-  a repair was walk-only, but the planned position was on a high bridge. The way back was used live in the resumes; the
-  planner fix is covered by tests only (the live plan was sliced before it).
+
+An earlier build the same day needed two resumes (7,338 s active, 3.1 blocks/s). It exposed a planner bug (a slab clicked
+onto an equal slab) and a walk-only way back after repairs; both are fixed. Its checkpoints only counted non-air blocks, so
+three swapped slab / lantern pairs were only found at the end. At its checkpoint 11 four blocks were placed again for a
+**cause that is still unknown**: replaying that plan up to there with the new build gave 2750/2750 and no repair.
 
 ## Slicing preview
 

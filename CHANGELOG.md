@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- `run` compares every step and every reported block change with the exact planned state (once the server acknowledged the
+  clicks) and repairs wrong, missing and stray blocks at once; checkpoints audit all known positions. It used to only
+  check at checkpoints that placed blocks were not air.
+- Jumps take 6 ticks instead of 8 (drifting while rising); `slice` shortens every walk. `est_seconds` models the executor
+  and `est_move_seconds` is new.
+
 ### Fixed
 - `run`: after a checkpoint repair or on resume the way back may use temporary scaffold (it used to only walk).
 - `slice`: a slab is no longer clicked onto an equal slab (that made a double slab); `simulate` rejects such clicks.
