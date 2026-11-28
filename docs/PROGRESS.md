@@ -174,7 +174,8 @@ deferred to the last pass instead of being declared unreachable at once.
 | bridge blocks / pillars / breaks (all) | 6,720 / 1,030 / 7,918 | 4,630 / 693 / 5,498 |
 | cleanup moves | 9,198 | 5,782 |
 
-Simulation clean, unreachable 0, no scaffold left, two plans byte-identical, 2 declared log-axis fallbacks as before.
+Simulation clean, unreachable 0, no scaffold left, two plans byte-identical, 6 declared log-axis fallbacks (the old order had
+2; an earlier note here said 2).
 Small factory offline: 547 -> 468 s (-14%; moves 2,289 -> 1,968, breaks 512 -> 277).
 Small factory LIVE (vanilla 1.21.1, empty world): 539 s -> 464 s (-14%, 5.2 blocks/s), 2408/2408, 0 re-placed, 0 kicks,
 no movement warnings; `verify_rcon.py` 2407/2408 (the declared log), 83,496 cells around it all air. The large factory
@@ -185,3 +186,28 @@ Cleanup is still parameter-sensitive: several other band / tile sizes ended with
 large factory, 4/16 with TIDY_BELOW 0, 1 or 2, and 5/16 and 4/14 with TIDY_BELOW 1, planned fully (estimates 4,649 to
 4,921 s). A schematic that hits this needs a
 cleanup that takes scaffold out before a room closes. The test server was stopped via RCON.
+
+
+## Update 2026-11-28: large factory live with the tile-and-band order
+
+Code e8bb08d, vanilla 1.21.1, 2 GB, fresh world, ONE run, no resume, no viewer: 12:50:15 to 14:08:20, 54,764 steps.
+
+| large factory, live | previous clean run | tile-and-band |
+|---|---|---|
+| time | 6,898 s | 4,685 s (-32%) |
+| blocks/s | 3.3 | 4.8 |
+| moves / walking | 32,321 / 6,076 s | 21,197 / 4,000 s |
+| pillar / support / place / break | 198 / 103 / 339 / 144 s | 131 / 72 / 340 / 93 s |
+| repairs / kicks / resumes | 2 / 0 / 0 | 1 / 0 / 0 |
+| exact states (`verify_rcon.py`) | 22,479 / 22,481 | 22,475 / 22,481 |
+
+Offline estimate was 4,721 s total, 4,058 s walking. 22,481 placed, 0 refused, 0 missing. The one repair was a copper block
+aged to exposed_copper (plan 92,73,21); the way back added 4 blocks of extra scaffold, all taken down at the end. No
+"moved too quickly" / "moved wrongly" / "Can't keep up" in the server log. 721,018 non-schematic cells around the build all
+air; 37/37 copper unaged at check time. World origin 10 65 -2. All 6 differing states are the 6 log-axis fallbacks that
+`slice` declares (4 more than the old order). No new renders: same schematic, `docs/live-factory/` still represents it.
+Log: `scratchpad/large/tile/run.log` (outside the repo). The test server was stopped via RCON.
+
+Open: get the 4 extra log-axis fallbacks back (place those logs while a side face of the right axis exists); 5 blocks/s is
+not reached on the large factory.
+
