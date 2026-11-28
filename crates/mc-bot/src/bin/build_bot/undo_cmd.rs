@@ -103,7 +103,7 @@ fn undo(args: &[String]) -> Result<(), String> {
     if !sorted.ours.is_empty() {
         let plan_undo = undo::plan(&plan.header, &sorted.ours, &foreign)?;
         println!("{}", tr!("undo plan: {} steps, checked by the simulator", "철거 계획: {}단계, 시뮬레이터 검사 통과", plan_undo.plan.steps.len()));
-        let opts = Opts { verify: false, from_step: 0, offset: Some(off), extras_file: None, refit: Vec::new(), keep: Default::default(), demolition: Some(plan_undo.demolition.clone()) };
+        let opts = Opts { verify: false, from_step: 0, offset: Some(off), extras_file: None, refit: Vec::new(), keep: Default::default(), demolition: Some(plan_undo.demolition.clone()), strip: None };
         let report = exec::run(&mut bot, &plan_undo.plan, &opts, &mut |m| eprintln!("  {m}"), &mut |_, _| {}).map_err(|e| match &bot.kicked {
             Some(r) => preflight::kicked_message(r, &name),
             None => tr!("the connection failed: {}\n  -> run the same command again; blocks already removed are skipped", "연결이 끊겼습니다: {}\n  -> 같은 명령을 다시 실행하세요. 이미 제거한 블록은 건너뜁니다", e),
