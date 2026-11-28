@@ -181,18 +181,21 @@ what ran on a local vanilla server of that release (creative, offline).
 
 | Version | Protocol | Tables + unit tests | Live |
 |---|---|---|---|
-| 1.20.4 | 765 | ✅ | ✅ short builds |
+| 1.20.4 | 765 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 466 s |
 | 1.21 | 767 | ✅ (shares 1.21.1's) | not run separately |
-| 1.21.1 | 767 | ✅ | ✅ short builds; the 2408-block factory (earlier measurement) |
-| 1.21.4 | 769 | ✅ | ✅ short builds |
-| 26.3 | 777 | ✅ | ✅ short builds; 2408-block factory: 2408/2408 placed, 2407 exact (the one log axis the slicer predicts offline), 568 s, no kick |
+| 1.21.1 | 767 | ✅ | ✅ current planner: 2408-block factory 2408/2408 exact, 22,481-block factory 22,481/22,481 exact; short builds with an older planner |
+| 1.21.4 | 769 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 464 s |
+| 26.3 | 777 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 466 s |
 
-"Short builds" (2026-11), each started on a cleared area and compared block by block over RCON: `cottage.txt` 25/25,
-`stair-tower.txt` 51/51, a 5-wide 9-high wall 45/45 (builds and removes scaffold), three single chests in a row 3/3
-(needs sneaking) and
-`state-lab.txt` 27/27, all exact through the plan pipeline (sprinting) on 1.20.4, 1.21.1, 1.21.4 and 26.3.
-`stair-tower.txt` in direct mode: 51/51 confirmed by the server's block
-updates. No kicks.
+Re-verified on 2026-11-28 with the planner of `48ee50e` on 1.20.4, 1.21.4 and 26.3 (code `7d7ce4c`, through the plan
+pipeline, `run --verify`, each build on a cleared area, then compared block by block over RCON): `factory-small.schem`
+2408/2408 (against the schematic), `cottage.txt` 25/25, `stair-tower.txt` 51/51, `state-lab.txt` 27/27 (including the
+door's upper half), `pixel-heart.txt` 27/27, a 5-wide 9-high wall 45/45 (builds and removes scaffold) and three single
+chests in a row 3/3 (needs sneaking; the wall and chest blueprints are not in the repo). All exact; 0 re-placed,
+0 kicks, no movement or lag warning in the server logs. In a box around each build (16 blocks to each side, 8 above,
+from the ground surface up) every cell outside the build was air. `stair-tower.txt` in direct mode: 51/51 confirmed by
+the server's block updates (the bot's own check, not RCON). The large factory has **not** been built on these three
+releases.
 Survival mode, online mode, Paper/Spigot and releases not listed are untested. Differences between releases:
 [docs/RE/versions.md](docs/RE/versions.md).
 

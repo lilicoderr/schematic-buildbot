@@ -261,3 +261,12 @@ resume, no viewer: 14:34:20 to 15:51:46, 54,780 steps.
 This supersedes the "large factory was NOT rebuilt live" note above. Still open: 5 blocks/s on the large factory; the
 unexplained checkpoint 11 re-places of the oldest run (not seen since).
 
+
+## Update 2026-11-28: 1.20.4, 1.21.4 and 26.3 re-verified with the current planner
+
+Code 7d7ce4c, no code change. All repo blueprints except factory-large, plus the 9-high wall and 3-chest scratch
+blueprints: every state exact over RCON on all three, small factory 2408/2408 (466 / 464 / 466 s). Details in
+[RE/versions.md](RE/versions.md). No bot bug found. The one failed attempt was the scratch harness: it left
+`white-list` out of the 26.3 server.properties, so every login was refused. Logs and harness (outside the repo):
+`scratchpad/reverify/`. Test servers on 127.0.0.1:25567 / 25577, one at a time, each stopped via RCON.
+

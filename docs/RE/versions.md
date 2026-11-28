@@ -55,7 +55,27 @@ always writes 0 or 1 as the movement byte, which is valid in both forms. The byt
 
 The reach, placement, collision and movement notes in this folder, and the planner's block-state table
 (`state_table.rs`) and orientation rules, were derived from 1.21.1 only. For other releases the
-evidence is the live builds listed in the README, not a re-derivation.
+evidence is the live builds below and in the README, not a re-derivation.
+
+### Live re-verification with the current planner (2026-11-28)
+
+Code `7d7ce4c` (planner of `48ee50e`), a fresh vanilla flat-world server per release (creative, offline, 2 GB heap),
+`slice` + `run --verify`, then `execute if block` over RCON for every block.
+
+| build, exact states | 1.20.4 | 1.21.4 | 26.3 |
+|---|---|---|---|
+| factory-small (2408, judged against the schematic) | 2408, 466 s | 2408, 464 s | 2408, 466 s |
+| cottage / stair-tower | 25/25, 51/51 | 25/25, 51/51 | 25/25, 51/51 |
+| state-lab / pixel-heart | 27/27, 27/27 | 27/27, 27/27 | 27/27, 27/27 |
+| 9-high wall / 3 single chests (not in the repo) | 45/45, 3/3 | 45/45, 3/3 | 45/45, 3/3 |
+| direct mode, stair-tower (block updates only, no RCON) | 51/51 | 51/51 | 51/51 |
+
+All plan-pipeline runs: 0 refused, 0 re-placed, 0 missing, 0 kicks, no cell outside the build non-air in the box around
+it (16 to each side, 8 above, ground surface up), no "moved too quickly" / "moved wrongly" / "Can't keep up" in the
+server logs. Not covered: the large factory, `--resume`, and live repair paths (nothing needed a repair).
+
+A new 26.3 server whose `server.properties` omits `white-list` refused the bot (`not_whitelisted`); set
+`white-list=false` on a local test server.
 
 ## 4. Adding a release
 
@@ -71,4 +91,5 @@ Everything runs from `tools/re`; jars, mappings and decompiled sources stay in `
 4. `gen_tables.py` writes `data/v<protocol>.rs`. Register it in `data/mod.rs` and `version.rs`.
 5. Diff the classes of every packet in section 2 and the matching handlers in `ServerGamePacketListenerImpl`; add a
    `Layout` field and a byte test for each difference. Do not copy a neighbouring release's layout without checking.
-6. Only mark `live_verified` after building on a real server and checking the blocks with `tools/verify_states.py`.
+6. Only list a release as live in the README after building on a real server and checking the blocks with
+   `tools/verify_states.py`.
