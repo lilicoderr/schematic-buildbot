@@ -148,6 +148,6 @@ Newest state; older "open" notes above that concern these points are done.
 * Live, large factory, ONE run from an empty world, no resume, no viewer: 10:13:48 to 12:08:46, 22,481/22,481, 6,898 s,
   3.3 blocks/s, walking 6,076 s, 0 kicks, 2 repairs (aged copper), no "moved too quickly" or "Can't keep up" in the
   server log. `verify_rcon.py`: 22,479/22,481 (2 declared log-axis fallbacks), 37/37 copper unaged at check time, 721,018
-  cells around the build all air. World origin 7 65 -5. Log: `scratchpad\largeun4.log` (outside the repo). The test
+  cells around the build all air. World origin 7 65 -5. Log: `scratchpad/large/run4.log` (outside the repo). The test
   server was stopped via RCON.
 
