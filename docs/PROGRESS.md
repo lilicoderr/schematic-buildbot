@@ -324,3 +324,15 @@ then RCON). All three: factory-small 2408/2408 against the schematic (235 / 235 
 only). 0 refused, 0 re-placed, 0 missing, 0 kicks, surroundings all air, no movement or lag warning. No bug found. Not
 covered: large factory, `--resume`, live repair paths. Logs: `scratchpad/reverify/` (older ones in `prev-7d7ce4c/`). This
 supersedes the "not re-run live" line above.
+
+
+## Update 2026-11-28: one command, release v0.2.0
+
+Newest state. `build-bot build <file-or-URL> <host:port>` (`bin/build_bot/build_*.rs`, `fetch.rs`, `preflight.rs`, `job.rs`),
+`build.bat` (`build --ask`), `.github/workflows/release.yml` (on `v*` tags). v0.2.0 assets (Windows zip, Linux tar.gz,
+SHA256SUMS) exist; checksums verified and the Windows zip passed a dry run; the Linux binary only ran in the workflow.
+Live (vanilla 1.21.1, small factory): `build` from a local http URL, survival detected then switched, bot killed at about
+40%, rerun resumed: 2408/2408 exact (`verify_rcon.py`), 83,496 surrounding cells air, 0 kicks; `--origin` with
+stair-tower (51/51, bot check). Online mode, unsupported version, cannot connect, refused login: mock tests only
+(`tests/build_preflight.rs`). Logs: `scratchpad/buildlive/`. Test server stopped via RCON.
+Open: Actions warn that the Node 20 actions (checkout / upload / download-artifact v4) are deprecated.
