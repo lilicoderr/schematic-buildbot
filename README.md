@@ -72,8 +72,36 @@ block is broken again before the plan ends.
 
 Measured on a local vanilla 1.21.1 server (small factory, 2408 blocks): sliced in 0.3 s with 0 unreachable blocks,
 run in 748 s (3.2 blocks/s, faster at the start and slower where many scaffolds are needed), 2408/2408 placements confirmed
-by block updates, 0 re-placed, 0 kicks. The large 22k-block factory does not slice cleanly yet (see docs/PROGRESS.md).
+by block updates, 0 re-placed, 0 kicks. For the 22k-block factory see the next section.
 Neighbour-derived block states (stair shape, fence and pane connections) cannot be chosen by a client; the slicer counts them.
+
+## Large factory: live build (22,481 blocks)
+
+| <img src="docs/live-factory/hall-roof.png" alt="prismarine-viewer render of the finished large factory in the live world (not a client screenshot)" width="420"> | <img src="docs/live-factory/chimneys-silos.png" alt="prismarine-viewer render of the finished large factory in the live world (not a client screenshot)" width="420"> |
+|---|---|
+| <img src="docs/live-factory/office-side.png" alt="prismarine-viewer render of the finished large factory in the live world (not a client screenshot)" width="420"> | <img src="docs/live-factory/from-above.png" alt="prismarine-viewer render of the finished large factory in the live world (not a client screenshot)" width="420"> |
+
+<p align="center"><sub><b>prismarine-viewer renders of the live world</b> after the build, not Minecraft client screenshots (<code>tools/viewer/capture.js</code>)</sub></p>
+
+`blueprints/factory-large.schem`, built by `build-bot run` on a local vanilla 1.21.1 server (creative, offline, 2 GB heap,
+2026-11-28). **It was not one clean run:** it stopped once, the code was fixed, and the same plan was resumed twice.
+
+| Session | Placements | Time | What happened |
+|---|---|---|---|
+| 1 | 15,250 | 4,287 s | aborted: a checkpoint repair could not get back to its planned position |
+| 2 (`--resume --refit`) | 7,231 | 2,981 s | finished all 70,794 plan steps; 6 blocks still wrong (three swapped pairs) |
+| 3 (`--resume --refit`) | 6 broken and placed again | 70 s | the bot's own diff: 0 |
+
+* Total in the three sessions: 7,338 s (2 h 2 min), **3.1 blocks/s** overall (fixes between sessions not counted). 0 kicks.
+* Checkpoint repair placed 13 blocks again (4 at checkpoint 11, cause not determined; the other 9 from the slab bug below,
+  one of them in the repair that failed and printed no count).
+* Independent check over RCON (`tools/verify_rcon.py`): **22,475 / 22,481 states exact (99.97%)**. The 6 others: 4
+  `copper_block` that vanilla aged to `exposed_copper`, and 2 log axes the slicer had declared as fallbacks.
+* Leftover scaffold: 721,018 cells around the build that are not in the schematic were queried; all are air.
+* Two bugs found by this run, both fixed with regression tests: (1) the planner clicked a slab onto the top of an equal
+  slab, which makes a double slab and leaves the target empty (this also led to the swapped pairs); (2) the way back after
+  a repair was walk-only, but the planned position was on a high bridge. The way back was used live in the resumes; the
+  planner fix is covered by tests only (the live plan was sliced before it).
 
 ## Slicing preview
 
@@ -278,8 +306,8 @@ tools/preview.py      blueprint → isometric PNG
   | `--resume` | killed at 39/51, resumed: 12 more blocks, structure complete, progress file removed |
 
 - **Not verified live:** other servers/forks (Paper, Spigot, …), releases outside [Supported versions](#supported-versions), door hinges, trapdoors,
-  buttons and other families listed as unsupported. Real-server screenshots are still to come; the table above is
-  from server-side block queries, not images.
+  buttons and other families listed as unsupported. No Minecraft client screenshots were taken (the factory images are
+  prismarine-viewer renders); the table above is from server-side block queries.
 
 ## Contributing
 

@@ -94,3 +94,31 @@ Large factory: NOT run live. At 7c6ab4d `slice` gives up at a 90 s limit in the 
 `run` options: sprint by default (`--walk` disables), `--delay-ms` (default 10), `--resume` (progress file next to the
 plan; unit-tested only, not exercised live), `--verify`. Temporary supports are confirmed by block update.
 Test server: `scratchpad\mcserver` as above, `-Xmx2G`, below-normal priority; stopped via RCON after run6.
+
+
+## Update 2026-11-28: large factory built live (3 sessions)
+
+Plan `factory-large` (70,794 steps, 22,481 blocks), vanilla 1.21.1, 2 GB. Session 1: 06:49:09 to 08:00:36, 15,250 placed,
+aborted with "repair: cannot get back to the planned position on the ground". Session 2: 08:19:15 to 09:08:56, 7,231
+placed, all steps done. Session 3: 09:10:29 to 09:11:38, refit of 6 blocks. Active 7,338 s, 3.1 blocks/s, 0 kicks,
+13 blocks re-placed by checkpoint repair, 2 resumes. `verify_rcon.py`: 22,475/22,481 (4 copper aged to exposed_copper,
+2 declared log-axis fallbacks); 721,018 non-schematic cells around the build all air.
+
+Causes and fixes
+* Slab merge (planner): the `plan_clicks` fallback could click the top of an equal bottom slab. Server: lower slab becomes
+  double, target stays air. This, not the spectator "Viewer" that joined 07:57:11 to 07:57:43, explains checkpoint 60:
+  the missing blocks were plan steps 40840, 40841, 40880 (and 41007 at checkpoint 61). Fixed in `slice.rs`; `simulate`
+  rejects it (`sim_rules::slab_merges`, not in `sim::apply` so old plans still replay). Test `tests/slab_stack.rs`.
+* Way back: repair ended on the ground, the planned feet cell was on a bridge about 18 blocks up, `return_to` only walked.
+  Now `Site::go_to` searches with scaffold in the current world (`way_back.rs`, mock-mover tests); extra blocks are kept in
+  `<progress>.extras`, broken before a step needs the cell, and removed at the end (`extras.rs`).
+* Cascade: the cell a merge left empty took the next sea lantern (its click support was air); the checkpoint only checks
+  "not air", so three slab/lantern pairs stayed swapped until the final diff. `--refit x,y,z;...` (plan coordinates)
+  fixed them (`refit.rs`). Session 2 first used it for the 9 slabs the merges had doubled (old one-pass version).
+  Session 3 needed a progress file written by hand at the last step, because a finished run removes it.
+
+Open: checkpoint 11 re-placed 4 blocks (cause unknown; positions were not logged then). Checkpoint repair should also treat
+a wrong block type, not only air, as missing. The fixed planner has not been run live. Throughput is still walking-bound
+(session 2: 2,439 s of 2,981 s moving). Renders in `docs/live-factory/` come from `tools/viewer/capture.js` (prismarine-viewer,
+spectator, after the build); the "Screenshots (not done)" and "Large factory: NOT run live" notes above are out of date.
+The test server was stopped via RCON afterwards.

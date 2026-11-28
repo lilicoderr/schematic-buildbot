@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- `run`: after a checkpoint repair or on resume the way back may use temporary scaffold (it used to only walk).
+- `slice`: a slab is no longer clicked onto an equal slab (that made a double slab); `simulate` rejects such clicks.
+- `run --refit x,y,z;...` breaks and re-places listed plan positions.
+
 ### Added
 - Minecraft 1.20.4, 1.21.4 and 26.3 besides 1.21 / 1.21.1: packet ids, items and block states are generated from each
   server's data reports (`tools/re/gen_tables.py`); differing packet layouts are selected per version.
