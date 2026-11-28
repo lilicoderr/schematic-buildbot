@@ -4,8 +4,37 @@ use mc_proto::buf::PacketBuf;
 use mc_proto::frame;
 use mc_proto::State;
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// No TCP connection could be made at all (unknown host, refused, timed out).
+#[derive(Debug)]
+struct ConnectError(io::Error);
+
+impl std::fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for ConnectError {}
+
+pub fn is_connect_error(e: &io::Error) -> bool {
+    e.get_ref().is_some_and(|inner| inner.is::<ConnectError>())
+}
+
+fn open(addr: &str) -> io::Result<TcpStream> {
+    let mut last = io::Error::new(io::ErrorKind::NotFound, "the host name has no address");
+    for a in addr.to_socket_addrs()? {
+        match TcpStream::connect_timeout(&a, CONNECT_TIMEOUT) {
+            Ok(s) => return Ok(s),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
 
 pub struct Connection {
     reader: TcpStream,
@@ -18,7 +47,7 @@ pub struct Connection {
 
 impl Connection {
     pub fn connect(addr: &str) -> io::Result<Self> {
-        let stream = TcpStream::connect(addr)?;
+        let stream = open(addr).map_err(|e| io::Error::new(e.kind(), ConnectError(e)))?;
         stream.set_nodelay(true).ok();
         let writer = stream.try_clone()?;
         Ok(Self {

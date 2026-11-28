@@ -2,6 +2,7 @@
 
 use crate::codec;
 use crate::net::Connection;
+pub use crate::net::is_connect_error;
 use crate::tr;
 use crate::version;
 use mc_proto::buf::PacketBuf;
@@ -21,6 +22,7 @@ pub fn handshake(conn: &mut Connection, host: &str, port: u16, protocol: i32, ne
 /// Server-list ping (status). Returns the JSON string.
 pub fn status_ping(addr: &str, host: &str, port: u16) -> io::Result<String> {
     let mut conn = Connection::connect(addr)?;
+    conn.set_read_timeout(Some(REPLY_TIMEOUT))?;
     let ver = version::active();
     handshake(&mut conn, host, port, ver.protocol, 1)?;
     conn.state = State::Status;
@@ -75,6 +77,8 @@ pub fn login_offline_v(
     let ver = version::active();
     let p = ver.packets();
     let mut conn = Connection::connect(addr)?;
+    // without it a server that stops answering would hang the login for ever
+    conn.set_read_timeout(Some(REPLY_TIMEOUT))?;
     handshake(&mut conn, host, port, protocol, 2)?;
     conn.state = State::Login;
 
@@ -107,14 +111,14 @@ pub fn login_offline_v(
                 break;
             }
             x if x == p.cb_login_hello => {
-                return Err(io::Error::other(tr!(
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, tr!(
                     "the server requires encryption (online mode); use an online-mode=false server",
                     "서버가 암호화(온라인 모드)를 요구합니다. 테스트는 online-mode=false 서버로 하세요."
                 )));
             }
             x if x == p.cb_login_login_disconnect => {
                 let reason = body.read_string().unwrap_or_default();
-                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, tr!("login refused: {}", "로그인 거부: {}", reason)));
+                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, tr!("login refused: {}", "로그인 거부: {}", reason)));
             }
             _ => {}
         }
@@ -150,7 +154,7 @@ pub fn login_offline_v(
             }
             x if x == p.cb_config_disconnect => {
                 let reason = crate::text::disconnect_reason(&mut body);
-                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, tr!("configuration refused: {}", "설정 단계 거부: {}", reason)));
+                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, tr!("configuration refused: {}", "설정 단계 거부: {}", reason)));
             }
             _ => {}
         }
@@ -158,6 +162,9 @@ pub fn login_offline_v(
 
     Ok((conn, join))
 }
+
+/// Longest silence accepted while pinging or logging in.
+const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// View distance the bot announces (chunks); the server clamps it to its own limit.
 pub const VIEW_DISTANCE: u8 = 8;
