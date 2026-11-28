@@ -315,3 +315,12 @@ and 721,018 cells). Large: 16:56:42 to 17:43:44, 43,954 steps, move 2,186 s / 11
 `scratchpad/speed/{small,large}/run.log`. Test server stopped via RCON. Not re-run live with this order: 1.20.4, 1.21.4,
 26.3. No new renders (same schematic).
 
+
+## Update 2026-11-28: banded order verified live on 1.20.4, 1.21.4 and 26.3
+
+Code `2d5146e`, same harness and checks as the earlier re-verification (fresh flat server per release, `run --verify`,
+then RCON). All three: factory-small 2408/2408 against the schematic (235 / 235 / 236 s), cottage 25/25, stair-tower
+51/51, state-lab 27/27, pixel-heart 27/27, 9-high wall 45/45, 3 chests 3/3; direct-mode stair-tower 51/51 (block updates
+only). 0 refused, 0 re-placed, 0 missing, 0 kicks, surroundings all air, no movement or lag warning. No bug found. Not
+covered: large factory, `--resume`, live repair paths. Logs: `scratchpad/reverify/` (older ones in `prev-7d7ce4c/`). This
+supersedes the "not re-run live" line above.

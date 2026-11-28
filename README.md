@@ -180,13 +180,13 @@ what ran on a local vanilla server of that release (creative, offline).
 
 | Version | Protocol | Tables + unit tests | Live |
 |---|---|---|---|
-| 1.20.4 | 765 | ✅ | ✅ planner of `48ee50e`: short builds; 2408-block factory 2408/2408 exact, 466 s |
+| 1.20.4 | 765 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 235 s |
 | 1.21 | 767 | ✅ (shares 1.21.1's) | not run separately |
 | 1.21.1 | 767 | ✅ | ✅ current planner: 22,481-block factory 22,481/22,481 exact, 2408-block factory 2408/2408 exact; short builds with an older planner |
-| 1.21.4 | 769 | ✅ | ✅ planner of `48ee50e`: short builds; 2408-block factory 2408/2408 exact, 464 s |
-| 26.3 | 777 | ✅ | ✅ planner of `48ee50e`: short builds; 2408-block factory 2408/2408 exact, 466 s |
+| 1.21.4 | 769 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 235 s |
+| 26.3 | 777 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 236 s |
 
-The later build-order change (see the large factory above) was run live on 1.21.1 only. Re-verified on 2026-11-28 with the planner of `48ee50e` on 1.20.4, 1.21.4 and 26.3 (code `7d7ce4c`, through the plan
+Re-verified on 2026-11-28 on 1.20.4, 1.21.4 and 26.3 with the current build order (code `2d5146e`, through the plan
 pipeline, `run --verify`, each build on a cleared area, then compared block by block over RCON): `factory-small.schem`
 2408/2408 (against the schematic), `cottage.txt` 25/25, `stair-tower.txt` 51/51, `state-lab.txt` 27/27 (including the
 door's upper half), `pixel-heart.txt` 27/27, a 5-wide 9-high wall 45/45 (builds and removes scaffold) and three single

@@ -1,7 +1,6 @@
 //! Placements per standing position: before the bot walks anywhere, it places every upcoming
 //! block of the current group of layers that it can already place from where it stands. Walking
-//! dominates
-//! the run time, so this matters far more than the speed of anything else.
+//! dominates the run time, so this matters far more than the speed of anything else.
 
 use crate::nav::{blocks_cell, feet_cell};
 use crate::world::{within_reach, BlockPos, Vec3};

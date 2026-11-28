@@ -59,12 +59,12 @@ evidence is the live builds below and in the README, not a re-derivation.
 
 ### Live re-verification with the current planner (2026-11-28)
 
-Code `7d7ce4c` (planner of `48ee50e`), a fresh vanilla flat-world server per release (creative, offline, 2 GB heap),
+Code `2d5146e` (banded build order), a fresh vanilla flat-world server per release (creative, offline, 2 GB heap),
 `slice` + `run --verify`, then `execute if block` over RCON for every block.
 
 | build, exact states | 1.20.4 | 1.21.4 | 26.3 |
 |---|---|---|---|
-| factory-small (2408, judged against the schematic) | 2408, 466 s | 2408, 464 s | 2408, 466 s |
+| factory-small (2408, judged against the schematic) | 2408, 235 s | 2408, 235 s | 2408, 236 s |
 | cottage / stair-tower | 25/25, 51/51 | 25/25, 51/51 | 25/25, 51/51 |
 | state-lab / pixel-heart | 27/27, 27/27 | 27/27, 27/27 | 27/27, 27/27 |
 | 9-high wall / 3 single chests (not in the repo) | 45/45, 3/3 | 45/45, 3/3 | 45/45, 3/3 |
@@ -72,7 +72,8 @@ Code `7d7ce4c` (planner of `48ee50e`), a fresh vanilla flat-world server per rel
 
 All plan-pipeline runs: 0 refused, 0 re-placed, 0 missing, 0 kicks, no cell outside the build non-air in the box around
 it (16 to each side, 8 above, ground surface up), no "moved too quickly" / "moved wrongly" / "Can't keep up" in the
-server logs. Not covered: the large factory, `--resume`, and live repair paths (nothing needed a repair).
+server logs. The previous run (code `7d7ce4c`, layer-by-layer order inside each tile) was exact too, with factory-small
+at 464 to 466 s. Not covered: the large factory, `--resume`, and live repair paths (nothing needed a repair).
 
 A new 26.3 server whose `server.properties` omits `white-list` refused the bot (`not_whitelisted`); set
 `white-list=false` on a local test server.
