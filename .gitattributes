@@ -1,1 +1,3 @@
 *.bat text eol=crlf
+# vendored files stay byte-identical
+crates/mc-bot/webui/vendor/** -text
