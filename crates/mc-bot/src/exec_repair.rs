@@ -1,16 +1,18 @@
-//! Checkpoint repair for the plan executor: find placements the server never confirmed and
-//! re-place them with a short local plan (the online navigator), then walk back to where the plan
-//! expects the player.
+//! Repair for the plan executor: whenever the server shows another state than the plan wants,
+//! break and place again with a short local plan (the online navigator, [`crate::refit`]), then
+//! walk back to where the plan expects the player.
 
 use crate::builder::PlayClient;
-use crate::exec::Sent;
 use crate::extras::Extras;
+use crate::ledger::Ledger;
 use crate::nav::{feet_cell, Cell, Terrain};
+use crate::plan::Plan;
 use crate::scaffold::Site;
 use crate::sim::World;
 use crate::world::BlockPos;
 use std::collections::HashSet;
 use std::io;
+use std::time::Duration;
 
 /// Translation from plan coordinates to world coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -33,55 +35,45 @@ impl Offset {
     }
 }
 
-/// Schematic blocks (with a placement step) the server has not confirmed, in world coordinates.
-pub fn missing(bot: &PlayClient, world: &World, sent: &Sent, off: Offset) -> Vec<BlockPos> {
-    let mut out: Vec<BlockPos> = world
-        .blocks
-        .keys()
-        .filter(|c| !world.scaffold.contains(c))
-        .map(|c| off.pos(BlockPos::new(c.0, c.1, c.2)))
-        .filter(|p| sent.contains_key(p) && !bot.blocks.is_confirmed(*p))
-        .collect();
-    // a refused second click leaves a single slab: confirmed, but not done
-    for (c, s) in &world.blocks {
-        let p = off.pos(BlockPos::new(c.0, c.1, c.2));
-        if sent.contains_key(&p) && bot.blocks.is_confirmed(p) && crate::verify::half_done_double_slab(s, bot.blocks.state(p)) {
-            out.push(p);
-        }
-    }
-    out.sort_by_key(|p| (p.y, p.x, p.z));
-    out
+/// Long enough to sit out a server lag spike; returns as soon as the acknowledgement is there.
+const SYNC: Duration = Duration::from_secs(20);
+
+/// Wait for the server's answers to everything sent so far.
+pub fn settle(bot: &mut PlayClient) -> io::Result<()> {
+    bot.sync(SYNC)?;
+    bot.idle(Duration::from_millis(100))
 }
 
-/// Re-place every unconfirmed block; returns how many were attempted.
-pub fn repair(bot: &mut PlayClient, world: &World, sent: &Sent, off: Offset, extras: &mut Extras, say: &mut dyn FnMut(&str)) -> io::Result<usize> {
-    let todo = missing(bot, world, sent, off);
-    if todo.is_empty() {
-        return Ok(0);
-    }
-    let mut site = site_of(world, off, extras);
-    let plan_feet = off.cell(world.feet);
-    for p in &todo {
-        let Some((item, pl)) = sent.get(p) else { continue };
-        say(&format!("repair: placing {p:?} again"));
-        bot.blocks.forget(*p);
-        site.approach(bot, std::slice::from_ref(p))?;
-        if !bot.place(*p, *item, pl)? {
-            say(&format!("repair: {p:?} still out of reach"));
+/// What a repair needs to know about the run.
+pub struct Run<'a> {
+    pub plan: &'a Plan,
+    pub world: &'a World,
+    pub ledger: &'a mut Ledger,
+    pub extras: &'a mut Extras,
+}
+
+/// Repair whatever among `list` the server shows wrong, and what the repair itself disturbs
+/// (each position at most [`crate::ledger::MAX_TRIES`] times). Returns the blocks worked on.
+pub fn heal(bot: &mut PlayClient, run: &mut Run, mut list: Vec<BlockPos>, say: &mut dyn FnMut(&str)) -> io::Result<usize> {
+    let mut count = 0;
+    while bot.kicked.is_none() {
+        let wrong = run.ledger.wrong(bot, run.world, run.extras, list);
+        if wrong.is_empty() {
+            break;
         }
-        if bot.kicked.is_some() {
-            extras.set(site.standing());
-            return Ok(todo.len());
+        let off = run.ledger.off;
+        for (p, why) in &wrong {
+            say(&format!("repair: {p:?} (plan {},{},{}): {why}", p.x - off.dx, p.y - off.dy, p.z - off.dz));
+            *run.ledger.tries.entry(*p).or_default() += 1;
         }
+        list = wrong.into_iter().map(|w| w.0).collect();
+        count += list.len();
+        crate::refit::fix(bot, run, &list, say)?;
+        settle(bot)?;
+        run.ledger.collect(bot);
+        list.extend(run.ledger.due(bot.acked));
     }
-    site.finish(bot)?;
-    extras.set(site.standing());
-    bot.idle(std::time::Duration::from_millis(300))?;
-    // back to where the plan expects us
-    if feet_cell(bot.feet) != plan_feet && !return_to(bot, world, off, extras, say)? {
-        return Err(io::Error::other("repair: cannot get back to the planned position on the ground"));
-    }
-    Ok(todo.len())
+    Ok(count)
 }
 
 /// Get on foot to the feet cell the plan expects, searching the world as it stands now: walking

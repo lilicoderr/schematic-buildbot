@@ -38,6 +38,7 @@ const PACKETS: Packets = Packets {
     sb_play_use_item_on: 56,
     sb_play_player_command: 37,
     sb_play_player_input: 38,
+    cb_play_block_changed_ack: 5,
     cb_play_block_update: 9,
     cb_play_chunk_batch_finished: 12,
     cb_play_disconnect: 29,

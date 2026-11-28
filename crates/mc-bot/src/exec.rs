@@ -2,20 +2,22 @@
 //!
 //! Every step is first applied to the same world model the simulator uses, so the executor knows
 //! where the player must be (also after falls). Each `PLACE` is confirmed through the server's
-//! block-update packets; at every `CHECKPOINT` the confirmed set is compared with the expected one
-//! and anything missing is re-placed ([`crate::exec_repair`]) before the plan continues.
+//! block-update packets: every position a step touched, and every other change the server reports,
+//! is compared with the exact state the plan wants there at that moment ([`crate::ledger`]).
+//! A wrong or missing block is broken and placed again at once ([`crate::exec_repair`]); every
+//! `CHECKPOINT` audits all known positions again before the plan continues.
 
 use crate::blocks;
 use crate::builder::PlayClient;
-use crate::exec_repair::{self, Offset};
+use crate::exec_repair::{self, Offset, Run};
 use crate::extras::{self, Extras};
+use crate::ledger::Ledger;
 use crate::nav::{cell_feet, feet_cell, Cell};
 use crate::placement::{Click, Plan as Placement};
 use crate::plan::{Plan, Step};
 use crate::schematic::{split_state, Block};
 use crate::sim::{self, World};
 use crate::world::BlockPos;
-use std::collections::HashMap;
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -55,9 +57,6 @@ pub struct Opts {
     pub refit: Vec<BlockPos>,
 }
 
-/// What a placement step needs to be repeated later: item id and click plan (world coordinates).
-pub type Sent = HashMap<BlockPos, (i32, Placement)>;
-
 /// Pitch and sneak are not stored in the plan: they follow from the wanted state alone.
 pub(crate) fn to_placement(state: &str, clicks: &[crate::plan::ClickStep], yaw: Option<f32>, off: Offset) -> Placement {
     let block = Block::from_state(BlockPos::new(0, 0, 0), state);
@@ -72,17 +71,27 @@ pub(crate) fn to_placement(state: &str, clicks: &[crate::plan::ClickStep], yaw: 
 }
 
 /// Final server-reported states against the plan, in a stable order.
-fn state_diffs(bot: &PlayClient, world: &World, sent: &Sent, off: Offset) -> Vec<(BlockPos, String, String)> {
+fn state_diffs(bot: &PlayClient, world: &World, ledger: &Ledger) -> Vec<(BlockPos, String, String)> {
+    let off = ledger.off;
     let mut out: Vec<(BlockPos, String, String)> = world
         .blocks
         .iter()
         .filter(|(c, _)| !world.scaffold.contains(*c))
         .map(|(c, s)| (off.pos(BlockPos::new(c.0, c.1, c.2)), s))
-        .filter(|(p, _)| sent.contains_key(p))
+        .filter(|(p, _)| ledger.placed.contains(p) || bot.blocks.state(*p).is_some())
         .filter_map(|(p, s)| crate::verify::difference(s, bot.blocks.state(p)).map(|d| (p, s.clone(), d)))
         .collect();
     out.sort_by_key(|(p, ..)| (p.y, p.x, p.z));
     out
+}
+
+/// Audit every position the server has reported or this session has placed.
+fn full_audit(bot: &mut PlayClient, run: &mut Run, say: &mut dyn FnMut(&str)) -> io::Result<usize> {
+    exec_repair::settle(bot)?;
+    run.ledger.collect(bot);
+    run.ledger.due(bot.acked);
+    let all = run.ledger.everything(bot).into_iter().map(|(y, x, z)| BlockPos::new(x, y, z)).collect();
+    exec_repair::heal(bot, run, all, say)
 }
 
 pub fn run(
@@ -94,7 +103,7 @@ pub fn run(
 ) -> io::Result<Report> {
     let off = opts.offset.unwrap_or_else(|| Offset::between(plan.header.start, feet_cell(bot.feet)));
     let mut world = World::new(plan.header.origin.1, plan.header.start);
-    let mut sent: Sent = HashMap::new();
+    let mut ledger = Ledger::new(plan, off);
     let mut rep = Report::default();
     let started = Instant::now();
     let (mut window_start, mut window_n) = (Instant::now(), 0usize);
@@ -103,6 +112,7 @@ pub fn run(
     let first = opts.from_step.min(plan.steps.len());
     let mut extras = Extras::open(opts.extras_file.clone(), first > 0);
     for (i, st) in plan.steps[..first].iter().enumerate() {
+        ledger.own(i, st);
         sim::apply(&mut world, st).map_err(|m| io::Error::other(format!("step {}: {m}", i + 1)))?;
     }
     if first > 0 {
@@ -168,7 +178,6 @@ pub fn run(
                 if bot.place(at, item, &pl)? {
                     rep.placed += 1;
                     window_n += 1;
-                    sent.insert(at, (item, pl));
                     if window_n == 100 {
                         rep.windows.push(100.0 / window_start.elapsed().as_secs_f64().max(0.001));
                         window_start = Instant::now();
@@ -187,8 +196,8 @@ pub fn run(
             }
             Step::Checkpoint { n, .. } => {
                 rep.checkpoints += 1;
-                bot.idle(Duration::from_millis(300))?;
-                let fixed = exec_repair::repair(bot, &world, &sent, off, &mut extras, say)?;
+                let mut run = Run { plan, world: &world, ledger: &mut ledger, extras: &mut extras };
+                let fixed = full_audit(bot, &mut run, say)?;
                 rep.repaired += fixed;
                 say(&format!("checkpoint {n}: {} blocks expected, {} re-placed", world.built().0, fixed));
             }
@@ -197,6 +206,8 @@ pub fn run(
             // the step may be half done: do not record it as finished
             break;
         }
+        ledger.collect(bot);
+        ledger.sent(i, st, bot.seq);
         // The server moved us (for example a lag spike made queued moves exceed its speed limit):
         // replaying on from the planned cell would walk through the air, and whatever was sent since
         // may have failed silently. Walk back, then re-place what is missing right away.
@@ -208,7 +219,14 @@ pub fn run(
                 rep.aborted = Some(format!("step {}: lost the planned position after a server teleport", i + 1));
                 break;
             }
-            rep.repaired += exec_repair::repair(bot, &world, &sent, off, &mut extras, say)?;
+            let mut run = Run { plan, world: &world, ledger: &mut ledger, extras: &mut extras };
+            rep.repaired += full_audit(bot, &mut run, say)?;
+        }
+        // standing where the plan expects (no walk queued): put right what the server disagrees with
+        if level.is_empty() {
+            let due = ledger.due(bot.acked);
+            let mut run = Run { plan, world: &world, ledger: &mut ledger, extras: &mut extras };
+            rep.repaired += exec_repair::heal(bot, &mut run, due, say)?;
         }
         rep.spent[kind] += t_step.elapsed().as_secs_f64();
         rep.counts[kind] += 1;
@@ -219,11 +237,18 @@ pub fn run(
     }
     bot.idle(Duration::from_millis(500))?;
     let complete = rep.steps_done == plan.steps.len() && rep.aborted.is_none() && bot.kicked.is_none();
-    if complete {
-        crate::refit::run(bot, plan, &world, &mut sent, off, &opts.refit, &mut extras, say)?;
+    if complete && !opts.refit.is_empty() {
+        // blocks the caller knows to be wrong (for example from an earlier session)
+        let list: Vec<BlockPos> = opts.refit.iter().map(|&p| off.pos(p)).collect();
+        let mut run = Run { plan, world: &world, ledger: &mut ledger, extras: &mut extras };
+        for p in &list {
+            say(&format!("refit: {p:?}"));
+        }
+        crate::refit::fix(bot, &mut run, &list, say)?;
     }
     if opts.verify && rep.aborted.is_none() && bot.kicked.is_none() {
-        rep.repaired += exec_repair::repair(bot, &world, &sent, off, &mut extras, say)?;
+        let mut run = Run { plan, world: &world, ledger: &mut ledger, extras: &mut extras };
+        rep.repaired += full_audit(bot, &mut run, say)?;
     }
     if complete && !extras.cells.is_empty() {
         say(&format!("taking down {} blocks of extra scaffold", extras.cells.len()));
@@ -233,8 +258,10 @@ pub fn run(
         say(&format!("extra scaffold left standing: {:?}", extras.cells));
         bot.idle(Duration::from_millis(300))?;
     }
-    rep.missing = exec_repair::missing(bot, &world, &sent, off);
-    rep.differs = state_diffs(bot, &world, &sent, off);
+    rep.missing = ledger.placed.iter().copied().filter(|&p| !bot.blocks.is_confirmed(p)).collect();
+    rep.missing.retain(|p| world.blocks.contains_key(&(p.x - off.dx, p.y - off.dy, p.z - off.dz)));
+    rep.missing.sort_by_key(|p| (p.y, p.x, p.z));
+    rep.differs = state_diffs(bot, &world, &ledger);
     rep.elapsed = started.elapsed();
     rep.kicked = bot.kicked.clone();
     Ok(rep)

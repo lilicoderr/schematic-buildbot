@@ -1,79 +1,18 @@
 //! The executor against a mock server that speaks just enough protocol 767: it confirms
-//! placements with block updates and silently drops one, which the checkpoint repair must fix.
+//! placements with block updates and silently drops one, which the repair must fix.
 
 use mc_bot::builder::PlayClient;
 use mc_bot::exec::{self, Opts};
 use mc_bot::schematic::Schematic;
-use mc_bot::data::Packets;
-use mc_bot::{slice, version};
-use mc_proto::buf::PacketBuf;
-use mc_proto::frame::{try_parse_frame, write_frame};
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use mc_bot::slice;
+use std::net::TcpListener;
 use std::thread;
 
-/// Packet ids of protocol 767.
-fn ids() -> &'static Packets {
-    version::DEFAULT.packets()
-}
-
-struct Peer {
-    stream: TcpStream,
-    inbox: Vec<u8>,
-}
-
-impl Peer {
-    /// Next packet from the bot, or `None` once it disconnects.
-    fn recv(&mut self) -> Option<(i32, PacketBuf)> {
-        let mut chunk = [0u8; 4096];
-        loop {
-            if let Some((used, id, body)) = try_parse_frame(&self.inbox, None).unwrap() {
-                self.inbox.drain(..used);
-                return Some((id, body));
-            }
-            match self.stream.read(&mut chunk) {
-                Ok(0) | Err(_) => return None,
-                Ok(n) => self.inbox.extend_from_slice(&chunk[..n]),
-            }
-        }
-    }
-
-    fn send(&mut self, id: i32, body: &PacketBuf) {
-        let _ = write_frame(&mut self.stream, id, body.as_slice(), None);
-        let _ = self.stream.flush();
-    }
-
-    fn block_update(&mut self, at: (i32, i32, i32), state: i32) {
-        let mut b = PacketBuf::new();
-        b.write_position(at.0, at.1, at.2);
-        b.write_varint(state);
-        self.send(ids().cb_play_block_update, &b);
-    }
-}
+mod mock;
+use mock::{ids, Peer};
 
 fn serve(listener: TcpListener, spawn: (i32, i32, i32), drop_nth: usize, bounce_nth_move: usize) {
-    let (stream, _) = listener.accept().unwrap();
-    let mut p = Peer { stream, inbox: Vec::new() };
-    p.recv().expect("handshake");
-    p.recv().expect("login start");
-    let mut ok = PacketBuf::new();
-    ok.write_uuid(1);
-    ok.write_string("Mock");
-    ok.write_varint(0);
-    p.send(ids().cb_login_login_finished, &ok);
-    p.recv().expect("login ack");
-    p.recv().expect("client information");
-    p.send(ids().cb_config_finish_configuration, &PacketBuf::new());
-    p.recv().expect("finish ack");
-    let mut tp = PacketBuf::new();
-    for v in [spawn.0 as f64 + 0.5, spawn.1 as f64, spawn.2 as f64 + 0.5] {
-        tp.write_f64(v);
-    }
-    tp.write_f32(0.0);
-    tp.write_f32(0.0);
-    tp.write_u8(0);
-    tp.write_varint(1);
-    p.send(ids().cb_play_player_position, &tp);
+    let mut p = Peer::accept(listener, spawn);
     let mut moves = 0;
     let mut placements = 0;
     while let Some((id, mut body)) = p.recv() {
@@ -81,28 +20,20 @@ fn serve(listener: TcpListener, spawn: (i32, i32, i32), drop_nth: usize, bounce_
             moves += 1;
             if moves == bounce_nth_move {
                 // "moved too quickly": send the bot back to the spawn with a new teleport id
-                let mut back = PacketBuf::new();
-                for v in [spawn.0 as f64 + 0.5, spawn.1 as f64, spawn.2 as f64 + 0.5] {
-                    back.write_f64(v);
-                }
-                back.write_f32(0.0);
-                back.write_f32(0.0);
-                back.write_u8(0);
-                back.write_varint(2);
-                p.send(ids().cb_play_player_position, &back);
+                p.teleport(spawn, 2);
             }
         } else if id == ids().sb_play_use_item_on {
-            let _hand = body.read_varint().unwrap();
-            let at = body.read_position().unwrap();
-            let d = [(0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1), (-1, 0, 0), (1, 0, 0)][body.read_varint().unwrap() as usize];
+            let (at, face, seq) = mock::read_use_item_on(&mut body);
+            let d = mock::FACES[face];
             placements += 1;
             if placements != drop_nth {
                 p.block_update((at.0 + d.0, at.1 + d.1, at.2 + d.2), 1);
             }
+            p.ack(seq);
         } else if id == ids().sb_play_player_action {
-            let _status = body.read_varint().unwrap();
-            let at = body.read_position().unwrap();
+            let (at, seq) = mock::read_dig(&mut body);
             p.block_update(at, 0);
+            p.ack(seq);
         }
     }
 }

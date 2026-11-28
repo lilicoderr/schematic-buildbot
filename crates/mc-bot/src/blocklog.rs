@@ -14,11 +14,14 @@ const AIR_STATE: i32 = 0;
 #[derive(Default)]
 pub struct BlockLog {
     last: HashMap<BlockPos, i32>,
+    /// Positions reported since the last [`BlockLog::drain_changed`].
+    changed: Vec<BlockPos>,
 }
 
 impl BlockLog {
     pub fn record(&mut self, pos: BlockPos, state: i32) {
         self.last.insert(pos, state);
+        self.changed.push(pos);
     }
 
     /// The server's last report for `pos` was a non-air block.
@@ -33,6 +36,17 @@ impl BlockLog {
     /// The state id the server last reported for `pos`.
     pub fn state(&self, pos: BlockPos) -> Option<i32> {
         self.last.get(&pos).copied()
+    }
+
+    /// Every position the server reported since the last call, including changes the bot did
+    /// not ask for (neighbour updates, slab merges).
+    pub fn drain_changed(&mut self) -> Vec<BlockPos> {
+        std::mem::take(&mut self.changed)
+    }
+
+    /// All positions with a report, with the last reported state.
+    pub fn reports(&self) -> impl Iterator<Item = (BlockPos, i32)> + '_ {
+        self.last.iter().map(|(&p, &s)| (p, s))
     }
 
     /// Forget a position (used before a retry so an old answer cannot satisfy it).

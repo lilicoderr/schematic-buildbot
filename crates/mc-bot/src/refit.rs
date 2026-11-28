@@ -1,23 +1,20 @@
-//! `--refit`: break blocks known to be wrong and place them again after the plan is done. All of
-//! them are broken first and then placed in plan order, so blocks that rest or click on each other
-//! come back correctly.
+//! Put wrong cells right: break every wrong block first and then place in plan order, so blocks
+//! that rest or click on each other come back correctly. Used by the repair during a run and by
+//! `--refit`.
 
 use crate::blocks;
 use crate::builder::PlayClient;
-use crate::exec::{to_placement, Sent};
-use crate::exec_repair::{self, Offset};
-use crate::extras::Extras;
-use crate::nav::{blocks_cell, feet_cell};
-use crate::placement::Click;
-use crate::plan::{Plan, Step};
+use crate::exec::to_placement;
+use crate::exec_repair::{self, settle, Run};
+use crate::nav::{blocks_cell, feet_cell, Cell};
+use crate::placement::{self, Action, Click};
+use crate::plan::Step;
 use crate::scaffold::Site;
 use crate::schematic::{split_state, Block};
-use crate::sim::World;
-use crate::world::{within_reach, BlockPos, Face};
+use crate::sim::SCAFFOLD;
+use crate::support;
+use crate::world::{eye_to_box, within_reach, BlockPos, CLICK_REACH};
 use std::io;
-use std::time::Duration;
-
-const SETTLE: Duration = Duration::from_millis(300);
 
 /// Walk to where `at` can be worked on, never on top of it (it may be about to be broken).
 fn approach(bot: &mut PlayClient, site: &mut Site, at: BlockPos) -> io::Result<bool> {
@@ -27,96 +24,132 @@ fn approach(bot: &mut PlayClient, site: &mut Site, at: BlockPos) -> io::Result<b
     result.map(|()| within_reach(bot.feet, at))
 }
 
-/// A free cell beside `at` where a temporary block can be put on top of something solid.
-fn side_cell(bot: &PlayClient, site: &Site, at: BlockPos) -> Option<(BlockPos, Face)> {
-    let here = feet_cell(bot.feet);
-    Face::HORIZONTAL.iter().find_map(|&f| {
-        let n = at.offset(f);
-        let free = !site.terrain.solid((n.x, n.y, n.z)) && !blocks_cell(here, n) && within_reach(bot.feet, n);
-        (free && site.terrain.solid((n.x, n.y - 1, n.z))).then(|| (n, f.opposite()))
-    })
+fn plan_cell(run: &Run, p: BlockPos) -> Cell {
+    let off = run.ledger.off;
+    (p.x - off.dx, p.y - off.dy, p.z - off.dz)
 }
 
-/// Break and re-place each of `list` (plan coordinates) as the plan's last step for it says.
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-    bot: &mut PlayClient,
-    plan: &Plan,
-    world: &World,
-    sent: &mut Sent,
-    off: Offset,
-    list: &[BlockPos],
-    extras: &mut Extras,
-    say: &mut dyn FnMut(&str),
-) -> io::Result<()> {
+/// Break what stands in `list` (world positions) and place what the plan wants there now, then
+/// return to the planned feet cell.
+pub fn fix(bot: &mut PlayClient, run: &mut Run, list: &[BlockPos], say: &mut dyn FnMut(&str)) -> io::Result<()> {
     if list.is_empty() {
         return Ok(());
     }
-    let mut jobs = Vec::new();
-    for want in list {
-        let found = plan.steps.iter().enumerate().rev().find_map(|(i, st)| match st {
-            Step::Place { pos, state, yaw, clicks } if pos == want => Some((i, state, yaw, clicks)),
-            _ => None,
-        });
-        match found {
-            Some(job) => jobs.push((job.0, *want, job.1, job.2, job.3)),
-            None => say(&format!("refit: the plan places nothing at {want:?}")),
+    let off = run.ledger.off;
+    let mut site = exec_repair::site_of(run.world, off, run.extras);
+    // known to be empty: reported as air, or placed this session and never reported
+    let placed = run.ledger.placed.clone();
+    let empty = |bot: &PlayClient, p: BlockPos| bot.blocks.state(p).map_or(placed.contains(&p), |s| s == 0);
+    // the model has the planned blocks; for these cells believe the server instead
+    for &p in list {
+        let c = (p.x, p.y, p.z);
+        if empty(bot, p) {
+            site.terrain.remove_block(c);
+        } else if bot.blocks.state(p).is_some() {
+            site.terrain.remove_block(c);
+            site.terrain.add_block(c, false);
         }
     }
-    jobs.sort_by_key(|j| j.0);
-    let mut site = exec_repair::site_of(world, off, extras);
-    for &(_, want, ..) in &jobs {
-        let at = off.pos(want);
-        if approach(bot, &mut site, at)? {
-            say(&format!("refit: breaking {at:?}"));
-            bot.break_block(at)?;
-            bot.idle(SETTLE)?;
-            site.terrain.remove_block((at.x, at.y, at.z));
-        } else {
-            say(&format!("refit: no way to {at:?}"));
-        }
-    }
-    for &(_, want, state, yaw, clicks) in &jobs {
-        let at = off.pos(want);
-        let name = split_state(state).0;
-        let mut pl = to_placement(state, clicks, *yaw, off);
-        if !approach(bot, &mut site, at)? {
-            say(&format!("refit: no way back to {at:?}"));
+    let mut order = list.to_vec();
+    order.sort_by_key(|p| (-p.y, p.x, p.z));
+    // top down, so nothing is left resting on a block that is about to go
+    for at in order {
+        if empty(bot, at) {
             continue;
         }
-        // a slab whose planned click would merge into its support gets a temporary side support
-        let first = &clicks[0];
-        let under = world.blocks.get(&(first.support.x, first.support.y, first.support.z));
-        let merges = under.is_some_and(|s| {
-            let support = Block::from_state(first.support, s);
-            crate::orient::merges_into(&support, &name, first.face, first.cursor.1)
-        });
-        let mut temp = None;
-        if merges {
-            let Some((n, face)) = side_cell(bot, &site, at) else {
-                say(&format!("refit: no room for a side support at {at:?}"));
-                continue;
-            };
-            bot.place_support(n, n.below(), Face::Up, (0.5, 1.0, 0.5))?;
-            let (dx, _, dz) = face.offset();
-            let cursor = (0.5 + 0.5 * dx as f32, 0.25, 0.5 + 0.5 * dz as f32);
-            pl.clicks = vec![Click { support: n, face, cursor }];
-            temp = Some(n);
+        if approach(bot, &mut site, at)? {
+            bot.break_block(at)?;
+            settle(bot)?;
+            site.terrain.remove_block((at.x, at.y, at.z));
+        } else {
+            say(&format!("repair: no way to break {at:?}"));
         }
-        say(&format!("refit: placing {at:?} {state}"));
-        bot.blocks.forget(at);
-        let item = blocks::item_id(&name).unwrap_or(1);
-        bot.place(at, item, &pl)?;
-        bot.idle(SETTLE)?;
-        if let Some(n) = temp {
-            bot.break_block(n)?;
+    }
+    // plan order; cells without a placement step (pillar blocks) first, they only carry others
+    let mut jobs: Vec<(Option<usize>, BlockPos)> = list
+        .iter()
+        .filter(|&&p| run.world.blocks.contains_key(&plan_cell(run, p)))
+        .map(|&p| (run.ledger.jobs.get(&p).copied(), p))
+        .collect();
+    jobs.sort_by_key(|&(i, p)| (i, p.y, p.x, p.z));
+    jobs.dedup();
+    for (job, at) in jobs {
+        if bot.kicked.is_some() {
+            break;
         }
-        sent.insert(at, (item, pl));
-        let standable = crate::nav::is_standable_surface(&name, None);
-        site.terrain.add_block((at.x, at.y, at.z), standable);
+        // a second half only comes back with its first one
+        if job.is_none() && run.world.blocks[&plan_cell(run, at)].contains("half=upper") {
+            continue;
+        }
+        place_again(bot, run, &mut site, job, at, say)?;
     }
     site.finish(bot)?;
-    extras.set(site.standing());
-    exec_repair::return_to(bot, world, off, extras, say)?;
+    run.extras.set(site.standing());
+    if !exec_repair::return_to(bot, run.world, off, run.extras, say)? {
+        return Err(io::Error::other("repair: cannot get back to the planned position on the ground"));
+    }
+    Ok(())
+}
+
+/// Place the planned block at `at` again. The planned click is used when its support still stands,
+/// otherwise another neighbour, or a temporary support chain.
+fn place_again(bot: &mut PlayClient, run: &mut Run, site: &mut Site, step: Option<usize>, at: BlockPos, say: &mut dyn FnMut(&str)) -> io::Result<()> {
+    let off = run.ledger.off;
+    let (state, mut pl) = match step.map(|i| &run.plan.steps[i]) {
+        Some(Step::Place { state, yaw, clicks, .. }) => (state.clone(), to_placement(state, clicks, *yaw, off)),
+        _ => (SCAFFOLD.to_string(), to_placement(SCAFFOLD, &[], None, off)),
+    };
+    let (name, props) = split_state(&state);
+    if !approach(bot, site, at)? {
+        say(&format!("repair: no way back to {at:?}"));
+        return Ok(());
+    }
+    let block = Block::from_state(at, &state);
+    let world = run.world;
+    // a click that merges into a slab would leave `at` empty; a usable block would just open
+    let safe = |c: &Click| {
+        let s = c.support;
+        let under = world.blocks.get(&(s.x - off.dx, s.y - off.dy, s.z - off.dz)).map(|v| Block::from_state(s, v));
+        !under.is_some_and(|b| placement::is_usable(&b.name) || crate::orient::merges_into(&b, &name, c.face, c.cursor.1))
+    };
+    let feet = bot.feet;
+    let near = |c: &Click| site.terrain.solid((c.support.x, c.support.y, c.support.z)) && eye_to_box(feet, c.support) <= CLICK_REACH && safe(c);
+    let good = |clicks: &[Click], ok: &dyn Fn(&Click) -> bool| !clicks.is_empty() && clicks.iter().all(|c| c.support == at || ok(c));
+    let mut chain = Vec::new();
+    if !good(&pl.clicks, &near) {
+        match placement::plan_clicks(&block, near) {
+            Action::Place(p) if p.missing_support.is_none() && good(&p.clicks, &near) => {
+                pl = placement::Plan { yaw: pl.yaw.or(p.yaw), ..p };
+            }
+            _ => {
+                let here = feet_cell(feet);
+                let solid = |q: BlockPos| site.terrain.solid((q.x, q.y, q.z));
+                chain = support::find_chain(at, feet, &solid, &|q| blocks_cell(here, q)).unwrap_or_default();
+                let links: Vec<BlockPos> = chain.iter().map(|l| l.pos).collect();
+                let with_chain = |c: &Click| near(c) || (links.contains(&c.support) && safe(c));
+                match placement::plan_clicks(&block, with_chain) {
+                    Action::Place(p) if good(&p.clicks, &with_chain) => pl = placement::Plan { yaw: pl.yaw.or(p.yaw), ..p },
+                    _ => {
+                        say(&format!("repair: nothing to click for {at:?}"));
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+    for l in &chain {
+        bot.place_support(l.pos, l.click.support, l.click.face, l.click.cursor)?;
+    }
+    bot.blocks.forget(at);
+    let item = blocks::item_id(&name).unwrap_or(1);
+    if !bot.place(at, item, &pl)? {
+        say(&format!("repair: {at:?} still out of reach"));
+    }
+    settle(bot)?;
+    for l in chain.iter().rev() {
+        bot.break_block(l.pos)?;
+    }
+    run.ledger.placed.insert(at);
+    site.terrain.add_block((at.x, at.y, at.z), crate::nav::is_standable_surface(&name, props.get("type").map(String::as_str)));
     Ok(())
 }

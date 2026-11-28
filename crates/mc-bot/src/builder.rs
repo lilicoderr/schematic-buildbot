@@ -72,6 +72,9 @@ pub struct PlayClient {
     pub place_delay: Duration,
     /// Last state the server reported per block position (see [`BlockLog`]).
     pub blocks: BlockLog,
+    /// Highest block action sequence the server has acknowledged: its block updates for every
+    /// click and dig up to this one have arrived.
+    pub acked: i32,
     /// Teleports forced by the server (a sign we are pushing into something).
     pub teleports: u32,
     next_tick: Instant,
@@ -100,6 +103,7 @@ impl PlayClient {
             kicked: None,
             place_delay: Duration::from_millis(25),
             blocks: BlockLog::default(),
+            acked: 0,
             teleports: 0,
             next_tick: Instant::now(),
             entity_id: 0,
@@ -146,6 +150,9 @@ impl PlayClient {
                     x if x == p.cb_play_chunk_batch_finished => {
                         // the server waits for this answer before it sends the next batch
                         self.conn.send(p.sb_play_chunk_batch_received, proto::chunk_batch_received(9.0).as_slice())?;
+                    }
+                    x if x == p.cb_play_block_changed_ack => {
+                        self.acked = self.acked.max(body.read_varint().unwrap_or(0));
                     }
                     x if x == p.cb_play_block_update => {
                         if let Some((pos, state)) = blocklog::parse_block_change(&mut body) {
@@ -460,6 +467,16 @@ impl PlayClient {
             self.pump_once()?;
         }
         Ok(self.blocks.is_confirmed(pos) || self.kicked.is_some())
+    }
+
+    /// Wait until the server has acknowledged every click and dig sent so far; false on timeout
+    /// (a server that stalls longer than `limit`).
+    pub fn sync(&mut self, limit: Duration) -> io::Result<bool> {
+        let end = Instant::now() + limit;
+        while self.acked < self.seq && self.kicked.is_none() && Instant::now() < end {
+            self.pump_once()?;
+        }
+        Ok(self.acked >= self.seq)
     }
 
     /// Break one block (creative mode: instantly) at `pos`.
