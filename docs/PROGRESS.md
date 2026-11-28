@@ -211,3 +211,27 @@ Log: `scratchpad/large/tile/run.log` (outside the repo). The test server was sto
 Open: get the 4 extra log-axis fallbacks back (place those logs while a side face of the right axis exists); 5 blocks/s is
 not reached on the large factory.
 
+
+## Update 2026-11-28: no more default-state fallbacks
+
+All 7 fallbacks (6 large, 1 small) were pillar-block axes with no clickable face of that axis at placement time (some
+had no neighbour yet, others had one that could not be clicked from the standing cell). `support::aim` now clicks a
+standing block (scaffold included) or places a temporary support chain ending exactly in the needed neighbour cell,
+removed right after (ordinary SUPPORT / BREAK steps, so the strict simulator checks them). `slice.rs` tries up to
+`AIM_TRIES` other standing cells before deferring. Deferring alone was tried first and rejected: the large estimate
+rose to 4,878 s (21,882 moves). `refit.rs` (live repair) uses the same helper; that path was not triggered live.
+
+| offline, before -> after | large | small |
+|---|---|---|
+| default-state fallbacks | 6 -> 0 | 1 -> 0 |
+| moves | 21,197 -> 21,197 | 1,968 -> 1,968 |
+| estimated walking | 4,058 -> 4,058 s | 413 -> 413 s |
+| estimated total | 4,721 -> 4,721 s | 468 -> 468 s |
+| scaffold breaks | 5,498 -> 5,506 | 277 -> 279 |
+
+All six repo blueprints: unreachable 0, fallbacks 0, strict simulation passes (`tests/exact_axes.rs`, also a lone
+x / z log on the ground and on a pillar; the large one runs only with `--release`). Large and small plans are
+deterministic. Small factory LIVE (vanilla 1.21.1, empty world): 464 s, 2408/2408, 0 re-placed, 0 kicks, no movement
+warnings; `verify_rcon.py` 2408/2408 exact, 83,496 cells around it all air. World origin 3 65 8. Log:
+`scratchpad/axisfix/small-run.log` (outside the repo). The test server was stopped via RCON. The large factory was NOT
+rebuilt live. This closes the "4 extra log-axis fallbacks" item above.

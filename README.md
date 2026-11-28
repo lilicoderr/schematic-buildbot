@@ -104,6 +104,9 @@ viewer or other player connected. (The renders above are of an earlier build of 
   `stripped_dark_oak_log` axes the slicer declares as fallbacks before the run. This is worse than the older order, which
   had 2 (22,479 exact). All 37 copper blocks were unaged at the time of the check (copper keeps ageing afterwards).
 * Leftover scaffold: 721,018 cells around the build that are not in the schematic were queried; all are air.
+* Since this run the 6 fallbacks are fixed in the planner (temporary blocks): the large plan now simulates with 0
+  fallbacks at the same estimate. **The large factory has not been rebuilt live since**; the small one has
+  (464 s, 2408 / 2408 exact over RCON, all 83,496 surrounding cells air).
 
 An earlier build the same day, also with the older order, needed two resumes (7,338 s active, 3.1 blocks/s). It exposed a planner bug (a slab clicked
 onto an equal slab) and a walk-only way back after repairs; both are fixed. Its checkpoints only counted non-air blocks, so
@@ -228,9 +231,10 @@ state into those inputs:
 | furnaces, chests, carved pumpkins, glazed terracotta, … | `facing` | looks the opposite way |
 | stairs | `half=top` | clicks the underside of the block above, or the upper half of a neighbour's side |
 | slabs | `type=top/double` | same as stairs; `double` clicks twice |
-| logs, pillars, hay/bone blocks | `axis=x/z` | clicks a face along the axis on a neighbouring block |
+| logs, pillars, hay/bone blocks | `axis=x/y/z` | clicks a face along the axis on a neighbouring block; the planner (`slice`) puts a temporary block there if there is none and removes it again |
 
-Anything the surroundings do not allow (no neighbour to click) falls back to the default state and is
+With `slice`, every blueprint in this repository now has 0 such fallbacks (checked by `tests/exact_axes.rs`). Otherwise,
+anything the surroundings do not allow (no neighbour to click) falls back to the default state and is
 listed in the run summary and in `--dry-run`. Upper door halves and bed heads are skipped because the
 server creates them with the first half. Trapdoors, buttons, levers and 6-way blocks currently use
 the default state.
