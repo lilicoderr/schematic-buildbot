@@ -42,6 +42,7 @@ const PACKETS: Packets = Packets {
     cb_play_block_update: 8,
     cb_play_chunk_batch_finished: 11,
     cb_play_disconnect: 32,
+    cb_play_game_event: 39,
     cb_play_keep_alive: 45,
     cb_play_level_chunk_with_light: 46,
     cb_play_login: 50,

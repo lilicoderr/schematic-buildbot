@@ -9,6 +9,7 @@
 
 use crate::blocklog::{self, BlockLog};
 use crate::codec::{self, PlayerAction};
+use crate::gamemode;
 use crate::motion::{self, JUMP_ARC, SPRINT_STEP, WALK_STEP};
 use crate::nav::{cell_feet, Cell};
 use crate::net::Connection;
@@ -66,6 +67,8 @@ pub struct PlayClient {
     pub seq: i32,
     held_item: i32,
     pub kicked: Option<String>,
+    /// Game mode the server reported (see [`crate::gamemode`]); `None` if it never said.
+    pub game_mode: Option<u8>,
     /// Pause after each placement; raise it on servers with strict packet-rate limits.
     pub place_delay: Duration,
     /// Last state the server reported per block position (see [`BlockLog`]).
@@ -99,6 +102,7 @@ impl PlayClient {
             seq: 0,
             held_item: -1,
             kicked: None,
+            game_mode: None,
             place_delay: Duration::from_millis(25),
             blocks: BlockLog::default(),
             acked: 0,
@@ -131,6 +135,10 @@ impl PlayClient {
                 match id {
                     x if x == p.cb_play_login => {
                         self.entity_id = body.read_i32().unwrap_or(0);
+                        self.game_mode = gamemode::from_login(&mut body, self.ver.protocol <= 765).or(self.game_mode);
+                    }
+                    x if x == p.cb_play_game_event => {
+                        self.game_mode = gamemode::from_game_event(&mut body).or(self.game_mode);
                     }
                     x if x == p.cb_play_keep_alive => {
                         let k = body.read_i64().unwrap_or(0);
