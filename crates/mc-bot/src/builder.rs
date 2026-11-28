@@ -8,6 +8,7 @@
 //!  · Only place when the eye-to-block distance is within reach, otherwise walk closer first.
 
 use crate::blocklog::{self, BlockLog};
+use crate::chunks::{self, ChunkStore};
 use crate::codec::{self, PlayerAction};
 use crate::gamemode;
 use crate::motion::{self, JUMP_ARC, SPRINT_STEP, WALK_STEP};
@@ -73,6 +74,8 @@ pub struct PlayClient {
     pub place_delay: Duration,
     /// Last state the server reported per block position (see [`BlockLog`]).
     pub blocks: BlockLog,
+    /// Blocks of the loaded chunks, for the site survey and undo.
+    pub chunks: ChunkStore,
     /// Highest block action sequence the server has acknowledged: its block updates for every
     /// click and dig up to this one have arrived.
     pub acked: i32,
@@ -105,6 +108,7 @@ impl PlayClient {
             game_mode: None,
             place_delay: Duration::from_millis(25),
             blocks: BlockLog::default(),
+            chunks: ChunkStore::default(),
             acked: 0,
             teleports: 0,
             next_tick: Instant::now(),
@@ -162,12 +166,21 @@ impl PlayClient {
                     }
                     x if x == p.cb_play_block_update => {
                         if let Some((pos, state)) = blocklog::parse_block_change(&mut body) {
-                            self.blocks.record(pos, state);
+                            self.block_changed(pos, state);
                         }
                     }
                     x if x == p.cb_play_section_blocks_update => {
                         for (pos, state) in blocklog::parse_multi_block_change(&mut body).unwrap_or_default() {
-                            self.blocks.record(pos, state);
+                            self.block_changed(pos, state);
+                        }
+                    }
+                    x if x == p.cb_play_level_chunk_with_light => match chunks::parse_chunk(self.ver.layout, &mut body) {
+                        Some((at, sections)) => self.chunks.load(at, sections),
+                        None => self.chunks.unreadable += 1,
+                    },
+                    x if x == p.cb_play_forget_level_chunk => {
+                        if let Some(at) = chunks::parse_forget(&mut body) {
+                            self.chunks.forget(at);
                         }
                     }
                     x if x == p.cb_play_disconnect => {
@@ -186,6 +199,13 @@ impl PlayClient {
             }
             Err(e) if is_timeout(&e) => Ok(()),
             Err(e) => Err(e),
+        }
+    }
+
+    fn block_changed(&mut self, pos: BlockPos, state: i32) {
+        self.blocks.record(pos, state);
+        if let Ok(state) = u32::try_from(state) {
+            self.chunks.set(pos, state);
         }
     }
 

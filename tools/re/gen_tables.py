@@ -21,7 +21,7 @@ FIELDS += [("play", S, n) for n in (
     "move_player_pos_rot", "pong", "player_action", "player_loaded", "set_carried_item",
     "set_creative_mode_slot", "swing", "use_item_on", "player_command", "player_input")]
 FIELDS += [("play", C, n) for n in (
-    "block_changed_ack", "block_update", "chunk_batch_finished", "disconnect", "game_event", "keep_alive", "level_chunk_with_light", "login",
+    "block_changed_ack", "block_update", "chunk_batch_finished", "disconnect", "forget_level_chunk", "game_event", "keep_alive", "level_chunk_with_light", "login",
     "ping", "player_position", "section_blocks_update", "set_health")]
 
 # Class name (without the "Packet" suffix and flow prefix) -> report name, where snake case differs.

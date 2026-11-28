@@ -167,7 +167,7 @@ pub fn login_offline_v(
 const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// View distance the bot announces (chunks); the server clamps it to its own limit.
-pub const VIEW_DISTANCE: u8 = 8;
+pub const VIEW_DISTANCE: u8 = 16;
 
 /// Serverbound chunk_batch_received: the server sends the next chunk batch only after
 /// this answer to every chunk_batch_finished.

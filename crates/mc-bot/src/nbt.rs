@@ -83,6 +83,16 @@ pub fn read_network(bytes: &[u8]) -> Result<Nbt, String> {
     cur.payload(tag)
 }
 
+/// Bytes taken by the network NBT value at the start of `bytes`.
+pub(crate) fn network_len(bytes: &[u8]) -> Option<usize> {
+    let mut cur = Cursor { data: bytes, pos: 0, depth: 0, tags: 0 };
+    let tag = cur.u8().ok()?;
+    if tag != 0 {
+        cur.payload(tag).ok()?;
+    }
+    Some(cur.pos)
+}
+
 fn decompress(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
         inflate(GzDecoder::new(bytes), "gzip")

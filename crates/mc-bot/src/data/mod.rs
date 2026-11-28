@@ -28,7 +28,7 @@ packets!(
     sb_play_move_player_pos, sb_play_move_player_pos_rot, sb_play_pong, sb_play_player_action,
     sb_play_player_loaded, sb_play_set_carried_item, sb_play_set_creative_mode_slot, sb_play_swing,
     sb_play_use_item_on, sb_play_player_command, sb_play_player_input,
-    cb_play_block_changed_ack, cb_play_block_update, cb_play_chunk_batch_finished, cb_play_disconnect, cb_play_game_event, cb_play_keep_alive,
+    cb_play_block_changed_ack, cb_play_block_update, cb_play_chunk_batch_finished, cb_play_disconnect, cb_play_forget_level_chunk, cb_play_game_event, cb_play_keep_alive,
     cb_play_level_chunk_with_light, cb_play_login, cb_play_ping, cb_play_player_position,
     cb_play_section_blocks_update, cb_play_set_health,
 );

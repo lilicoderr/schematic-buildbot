@@ -5,6 +5,7 @@ pub mod batch;
 pub mod blocklog;
 pub mod blocks;
 pub mod builder;
+pub mod chunks;
 pub mod codec;
 pub mod data;
 pub mod derive;

@@ -23,6 +23,9 @@ pub struct Layout {
     pub nbt_item_stack: bool,
     /// Sneaking is the shift bit of player_input; player_command lost its two shift actions.
     pub sneak_by_input: bool,
+    /// Chunk data: heightmaps are a binary map, sections carry a fluid count and paletted
+    /// containers have no long-array length.
+    pub binary_chunks: bool,
 }
 
 const V1_20_4: Layout = Layout {
@@ -32,10 +35,11 @@ const V1_20_4: Layout = Layout {
     accept_has_position: false,
     nbt_item_stack: true,
     sneak_by_input: false,
+    binary_chunks: false,
 };
 const V1_21: Layout = Layout { nbt_item_stack: false, ..V1_20_4 };
 const V1_21_4: Layout = Layout { particle_status: true, world_border_hit: true, teleport_with_velocity: true, ..V1_21 };
-const V26_3: Layout = Layout { accept_has_position: true, sneak_by_input: true, ..V1_21_4 };
+const V26_3: Layout = Layout { accept_has_position: true, sneak_by_input: true, binary_chunks: true, ..V1_21_4 };
 
 #[derive(Debug)]
 pub struct Version {
