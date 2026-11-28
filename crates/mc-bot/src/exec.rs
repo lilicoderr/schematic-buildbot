@@ -61,6 +61,8 @@ pub struct Opts {
     pub keep: HashSet<BlockPos>,
     /// An undo: the blocks standing before the first step, in plan coordinates.
     pub demolition: Option<Demolition>,
+    /// Cooperative build: the strip this bot works in and the blocks other bots finished before this plan.
+    pub strip: Option<(crate::territory::Fence, Vec<(BlockPos, String)>)>,
 }
 
 /// The world an undo plan starts from.
@@ -90,7 +92,7 @@ fn state_diffs(bot: &PlayClient, world: &World, ledger: &Ledger) -> Vec<(BlockPo
     let mut out: Vec<(BlockPos, String, String)> = world
         .blocks
         .iter()
-        .filter(|(c, _)| !world.scaffold.contains(*c))
+        .filter(|(c, _)| !world.scaffold.contains(*c) && world.fence.has(c.0, c.2))
         .map(|(c, s)| (off.pos(BlockPos::new(c.0, c.1, c.2)), s))
         .filter(|(p, _)| ledger.placed.contains(p) || bot.blocks.state(*p).is_some())
         .filter_map(|(p, s)| crate::verify::difference(s, bot.blocks.state(p)).map(|d| (p, s.clone(), d)))
@@ -120,6 +122,10 @@ pub fn run(
     if let Some(d) = &opts.demolition {
         world.blocks.extend(d.blocks.clone());
         world.demolish = d.targets.clone();
+    }
+    if let Some((fence, prebuilt)) = &opts.strip {
+        world.fence = *fence;
+        world.preload(prebuilt);
     }
     let mut ledger = Ledger::new(plan, off);
     ledger.keep = opts.keep.clone();

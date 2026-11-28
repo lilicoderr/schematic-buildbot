@@ -54,6 +54,8 @@ pub struct Terrain {
     reserved: HashSet<Cell>,
     /// Standing cells the planner must not pick right now (they would seal the bot in).
     pub avoid: HashSet<Cell>,
+    /// The columns this bot may use at all (cooperative builds; open for a single bot).
+    pub fence: crate::territory::Fence,
     /// Highest cell row the blueprint reaches; a standing cell with nothing solid above it up to
     /// here sees the open sky (the bot can always pillar out of it).
     pub sky_top: i32,
@@ -90,7 +92,8 @@ impl Terrain {
     /// Feet fit at `c`: carried from below, body and head cells free and not reserved.
     pub fn can_stand(&self, c: Cell) -> bool {
         let (x, y, z) = c;
-        self.carries((x, y - 1, z))
+        self.fence.has(x, z)
+            && self.carries((x, y - 1, z))
             && !self.solid(c)
             && !self.solid((x, y + 1, z))
             && !self.reserved.contains(&c)

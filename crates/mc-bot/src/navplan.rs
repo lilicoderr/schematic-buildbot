@@ -68,7 +68,7 @@ impl Query<'_> {
         for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let n = (x + dx, y, z + dz);
             let floor = (n.0, y - 1, n.2);
-            if y > t.ground_y && self.free(n) && self.free((n.0, y + 1, n.2)) && self.free(floor) && self.may_build(floor) {
+            if y > t.ground_y && t.fence.has(n.0, n.2) && self.free(n) && self.free((n.0, y + 1, n.2)) && self.free(floor) && self.may_build(floor) {
                 out.push(Act::Bridge(n));
             }
         }
@@ -103,6 +103,7 @@ impl Query<'_> {
                 let to = (nx, y - drop, nz);
                 let floor = (nx, to.1 - 1, nz);
                 if floor.1 >= t.ground_y
+                    && t.fence.has(nx, nz)
                     && self.may_build(floor)
                     && (floor.1..=y + 1).all(|yy| self.free((nx, yy, nz)))
                     && self.side_support(floor).is_some()

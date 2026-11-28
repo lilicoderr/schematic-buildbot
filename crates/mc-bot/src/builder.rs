@@ -26,6 +26,8 @@ use std::time::{Duration, Instant};
 /// Fall distance per tick while dropping off an edge.
 const FALL_STEP: f64 = 0.5;
 const TICK: Duration = Duration::from_millis(50);
+/// The "kick" reason of a bot that stopped because another bot of its build failed.
+pub const STOPPED: &str = "stopped: another bot of this build failed";
 
 /// One walking step from `feet` toward `target`: horizontal only, at most [`WALK_STEP`], and
 /// never any change in height, so a walking bot always stays on the surface it stands on.
@@ -82,6 +84,8 @@ pub struct PlayClient {
     /// Teleports forced by the server (a sign we are pushing into something).
     pub teleports: u32,
     next_tick: Instant,
+    /// Set by a cooperative build when another bot failed: this one stops at its next packet.
+    pub stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Entity id from the login packet (needed by player_command).
     entity_id: i32,
     /// Ground distance per tick for level walking: walking, or sprinting after [`PlayClient::set_sprint`].
@@ -112,6 +116,7 @@ impl PlayClient {
             acked: 0,
             teleports: 0,
             next_tick: Instant::now(),
+            stop: None,
             entity_id: 0,
             stride: WALK_STEP,
         };
@@ -133,6 +138,9 @@ impl PlayClient {
 
     /// Handle one incoming packet (or time out): kicks, teleports and keepalives.
     pub fn pump_once(&mut self) -> io::Result<()> {
+        if self.kicked.is_none() && self.stop.as_ref().is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed)) {
+            self.kicked = Some(STOPPED.into());
+        }
         let p = self.ver.packets();
         match self.conn.recv() {
             Ok((id, mut body)) => {

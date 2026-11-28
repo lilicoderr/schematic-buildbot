@@ -80,9 +80,19 @@ fn track(t: &mut Terrain, w: &World, c: Cell) {
 /// Shorten every walk of `plan`. A replacement is only taken when the plan checker accepts each
 /// of its steps; the caller simulates the whole plan afterwards anyway.
 pub fn shorten(plan: &mut Plan) {
+    shorten_in(plan, crate::territory::Fence::OPEN, &[]);
+}
+
+/// [`shorten`] for a plan whose walks stay inside `fence` and that starts with `prebuilt` standing.
+pub fn shorten_in(plan: &mut Plan, fence: crate::territory::Fence, prebuilt: &[(crate::world::BlockPos, String)]) {
     let ground = plan.header.origin.1;
     let mut w = World::new(ground, plan.header.start);
     let mut t = Terrain::new(ground, Default::default());
+    t.fence = fence;
+    for (p, state) in prebuilt {
+        w.blocks.insert((p.x, p.y, p.z), state.clone());
+        track(&mut t, &w, (p.x, p.y, p.z));
+    }
     let old = std::mem::take(&mut plan.steps);
     let mut out: Vec<Step> = Vec::with_capacity(old.len());
     let mut i = 0;

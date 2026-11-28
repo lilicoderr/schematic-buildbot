@@ -11,6 +11,8 @@ mod ask;
 mod build_args;
 #[path = "build_bot/build_cmd.rs"]
 mod build_cmd;
+#[path = "build_bot/build_multi.rs"]
+mod build_multi;
 #[path = "build_bot/build_plan.rs"]
 mod build_plan;
 #[path = "build_bot/plan_cmds.rs"]

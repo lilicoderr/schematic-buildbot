@@ -25,6 +25,8 @@ pub struct Args {
     pub delay: Duration,
     pub time_limit: Duration,
     pub memory_mb: usize,
+    /// Bots building together (1 = the single-bot build).
+    pub bots: usize,
 }
 
 pub fn parse(args: &[String]) -> Result<Args, String> {
@@ -45,6 +47,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
         delay: Duration::from_millis(10),
         time_limit: Duration::from_secs(600),
         memory_mb: 2048,
+        bots: 1,
     };
     let (mut rotate, mut mirror) = (None, None);
     let mut positional = Vec::new();
@@ -63,7 +66,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             // accepted for symmetry with `run`; `build` always verifies
             "--verify" => {}
             flag => {
-                const WITH_VALUE: [&str; 11] = ["--rotate", "--mirror", "--name", "--origin", "--version", "--lang", "--state-dir", "--wait-creative", "--delay-ms", "--time-limit", "--memory-limit-mb"];
+                const WITH_VALUE: [&str; 12] = ["--bots", "--rotate", "--mirror", "--name", "--origin", "--version", "--lang", "--state-dir", "--wait-creative", "--delay-ms", "--time-limit", "--memory-limit-mb"];
                 if !WITH_VALUE.contains(&flag) {
                     return Err(tr!("unknown option {}", "알 수 없는 옵션 {}", flag));
                 }
@@ -72,6 +75,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
                 match flag {
                     "--rotate" => rotate = Some(v.clone()),
                     "--mirror" => mirror = Some(v.clone()),
+                    "--bots" => a.bots = number()?.clamp(1, 4) as usize,
                     "--name" => a.name = v.clone(),
                     "--origin" => a.origin = Some(parse_origin(v)?),
                     "--version" => a.version = Some(v.clone()),
@@ -109,8 +113,8 @@ fn parse_origin(s: &str) -> Result<(i32, i32, i32), String> {
 
 pub fn usage() -> String {
     tr!(
-        "usage: build-bot build <schematic file or URL> <host:port> [--name N] [--origin x,y,z] [--rotate 90|180|270] [--mirror x|z] [--lang en|ko] [--dry-run]\n  more: --version V --fresh --allow-partial --wait-creative SECONDS --delay-ms N --walk --force --state-dir DIR",
-        "사용법: build-bot build <설계도 파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--rotate 90|180|270] [--mirror x|z] [--lang en|ko] [--dry-run]\n  추가: --version V --fresh --allow-partial --wait-creative 초 --delay-ms N --walk --force --state-dir 폴더"
+        "usage: build-bot build <schematic file or URL> <host:port> [--name N] [--origin x,y,z] [--rotate 90|180|270] [--mirror x|z] [--lang en|ko] [--dry-run]\n  more: --bots 2..4 --version V --fresh --allow-partial --wait-creative SECONDS --delay-ms N --walk --force --state-dir DIR",
+        "사용법: build-bot build <설계도 파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--rotate 90|180|270] [--mirror x|z] [--lang en|ko] [--dry-run]\n  추가: --bots 2..4 --version V --fresh --allow-partial --wait-creative 초 --delay-ms N --walk --force --state-dir 폴더"
     )
 }
 

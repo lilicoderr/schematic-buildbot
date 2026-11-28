@@ -110,6 +110,7 @@ pub fn site_of(world: &World, off: Offset, extras: &Extras) -> Site {
 
 fn terrain_of(world: &World, off: Offset) -> Terrain {
     let mut terrain = Terrain::new(world.ground_y + off.dy, HashSet::new());
+    terrain.fence = world.fence.shifted(off.dx, off.dz);
     for (c, s) in &world.blocks {
         let (name, props) = crate::schematic::split_state(s);
         let standable = crate::nav::is_standable_surface(&name, props.get("type").map(String::as_str));

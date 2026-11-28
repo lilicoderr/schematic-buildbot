@@ -112,7 +112,7 @@ impl Ledger {
         let c = (p.x - self.off.dx, p.y - self.off.dy, p.z - self.off.dz);
         let inside = |v: i32, lo: i32, hi: i32| v >= lo.saturating_sub(MARGIN) && v <= hi.saturating_add(MARGIN);
         let ours = inside(p.x, self.lo.0, self.hi.0) && inside(p.y, self.lo.1, self.hi.1) && inside(p.z, self.lo.2, self.hi.2);
-        if c.1 < world.ground_y || !ours || self.keep.contains(&p) || extras.cells.contains(&(p.x, p.y, p.z)) || world.pending.contains_key(&c) {
+        if c.1 < world.ground_y || !ours || !world.fence.has(c.0, c.2) || self.keep.contains(&p) || extras.cells.contains(&(p.x, p.y, p.z)) || world.pending.contains_key(&c) {
             return Verdict::Ok;
         }
         let want = audit::expected(world, c);

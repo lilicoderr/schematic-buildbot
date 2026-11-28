@@ -148,12 +148,31 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     }
 }
 
+/// What one bot of a cooperative build starts with ([`crate::multi`]); the default is the single
+/// bot on empty ground.
+#[derive(Debug, Clone, Default)]
+pub struct Setup {
+    /// Feet cell the plan starts from (default: beside the origin).
+    pub start: Option<Cell>,
+    /// The bot stands, places and builds scaffold only inside.
+    pub fence: crate::territory::Fence,
+    /// Blocks other bots have finished before this plan starts.
+    pub prebuilt: Vec<(BlockPos, String)>,
+}
+
 /// [`slice_with`] for one build order only.
 pub fn slice_ordered(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, budget: &mut Budget, kind: Order) -> Result<Plan, String> {
+    slice_setup(schem, origin, protocol, budget, kind, &Setup::default())
+}
+
+/// [`slice_ordered`] for one bot's part of a cooperative build: `schem` holds only the blocks
+/// this bot places.
+pub fn slice_setup(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, budget: &mut Budget, kind: Order, setup: &Setup) -> Result<Plan, String> {
     let t_tour = std::time::Instant::now();
     let order = crate::tour::tour_order(schem, kind);
     add(|_| {}, t_tour, |t| &mut t.tour);
-    let start = (origin.0 - 2, origin.1, origin.2 - 2);
+    let start = setup.start.unwrap_or((origin.0 - 2, origin.1, origin.2 - 2));
+    let fence = setup.fence;
     let at = |b: &Block| BlockPos::new(origin.0 + b.pos.x, origin.1 + b.pos.y, origin.2 + b.pos.z);
     let positions: Vec<BlockPos> = order.iter().map(|b| at(b)).collect();
     let mut site = Site::new(Terrain::new(origin.1, HashSet::new()));
@@ -170,7 +189,23 @@ pub fn slice_ordered(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, 
     let mut fallbacks: Vec<String> = Vec::new();
     let mut stalled = 0usize;
 
-    site.terrain.sky_top = positions.iter().map(|p| p.y).max().unwrap_or(origin.1) + 1;
+    site.terrain.fence = fence;
+    for (p, state) in &setup.prebuilt {
+        let (name, props) = crate::schematic::split_state(state);
+        let standable = crate::nav::is_standable_surface(&name, props.get("type").map(String::as_str));
+        site.terrain.add_block((p.x, p.y, p.z), standable);
+        placed.insert(*p);
+        if placement::is_usable(&name) {
+            usable.insert(*p);
+        }
+        if name.ends_with("_slab") {
+            slabs.insert(*p, Block::from_state(*p, state));
+        }
+        count += 1;
+        hash = hash.wrapping_add(block_hash(*p, state));
+    }
+    let top = positions.iter().copied().chain(setup.prebuilt.iter().map(|b| b.0)).map(|p| p.y).max();
+    site.terrain.sky_top = top.unwrap_or(origin.1) + 1;
     // world height of the lowest layer: bands of layers are counted from here
     let floor = positions.iter().map(|p| p.y).min().unwrap_or(origin.1);
     let mut todo: Vec<usize> = (0..order.len()).collect();
@@ -300,7 +335,7 @@ pub fn slice_ordered(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, 
                     (solid(p) || rec.alive.contains(&p)) && !usable.contains(&p) && crate::world::eye_to_box(feet, p) <= crate::world::CLICK_REACH
                 };
                 let safe = |c: &placement::Click| !slabs.get(&c.support).is_some_and(|s| orient::merges_into(s, &b.name, c.face, c.cursor.1));
-                aimed = support::aim(&wanted, feet, &|p| site.terrain.solid(cellp(p)), &|p| blocks_cell(here, p), &clickable, &safe);
+                aimed = support::aim(&wanted, feet, &|p| site.terrain.solid(cellp(p)), &|p| blocks_cell(here, p) || !fence.has(p.x, p.z), &clickable, &safe);
                 if aimed.is_some() {
                     break;
                 }
@@ -354,7 +389,7 @@ pub fn slice_ordered(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, 
         } else if pl.clicks.iter().any(|c| c.support != world && (!near(c.support) || !safe(c))) {
             let cellp = |p: BlockPos| (p.x, p.y, p.z);
             let can_click = |p: BlockPos| site.terrain.solid(cellp(p));
-            let blocked = |p: BlockPos| blocks_cell(here, p);
+            let blocked = |p: BlockPos| blocks_cell(here, p) || !fence.has(p.x, p.z);
             let t_chain = std::time::Instant::now();
             let found = support::find_chain(world, rec.feet, &can_click, &blocked);
             add(|_| {}, t_chain, |t| &mut t.chain);
@@ -457,13 +492,17 @@ pub fn slice_ordered(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, 
     plan.header.start = start;
     plan.header.protocol = protocol;
     plan.header.unreachable = unreachable;
-    crate::shorten::shorten(&mut plan);
+    crate::shorten::shorten_in(&mut plan, fence, &setup.prebuilt);
     crate::slice_stats::fill(&mut plan, schem.blocks.len(), deviations);
     plan.header.stats.push(("state_neighbour_derived".into(), crate::slice_stats::neighbour_derived(schem).to_string()));
     crate::slice_stats::fill_mismatches(&mut plan);
     plan.header.stats.extend(fallbacks.into_iter().map(|f| ("fallback_block".to_string(), f)));
     let t_sim = std::time::Instant::now();
-    let sim_result = sim::simulate(&plan, schem);
+    let mut whole = schem.clone();
+    whole.blocks.extend(setup.prebuilt.iter().map(|(p, s)| {
+        Block::from_state(BlockPos::new(p.x - origin.0, p.y - origin.1, p.z - origin.2), s)
+    }));
+    let sim_result = sim::simulate_in(&plan, &whole, &setup.prebuilt);
     add(|_| {}, t_sim, |t| &mut t.simulate);
     if let Err(e) = sim_result {
         if let Ok(p) = std::env::var("BUILDBOT_FAILED_PLAN") {

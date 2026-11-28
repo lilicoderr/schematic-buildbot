@@ -41,11 +41,20 @@ pub struct World {
     pub feet: Cell,
     /// Blocks an undo may break besides scaffold: the ones the bot itself placed earlier.
     pub demolish: HashSet<Cell>,
+    /// The columns this bot works in (cooperative builds; open for a single bot).
+    pub fence: crate::territory::Fence,
 }
 
 impl World {
     pub fn new(ground_y: i32, start: Cell) -> Self {
-        World { ground_y, blocks: HashMap::new(), scaffold: HashSet::new(), pending: HashMap::new(), mismatches: 0, feet: start, demolish: HashSet::new() }
+        World { ground_y, blocks: HashMap::new(), scaffold: HashSet::new(), pending: HashMap::new(), mismatches: 0, feet: start, demolish: HashSet::new(), fence: Default::default() }
+    }
+
+    /// Blocks standing before the first step.
+    pub fn preload(&mut self, blocks: &[(BlockPos, String)]) {
+        for (p, state) in blocks {
+            self.blocks.insert((p.x, p.y, p.z), state.clone());
+        }
     }
 
     pub fn solid(&self, c: Cell) -> bool {
@@ -293,7 +302,7 @@ pub fn apply(w: &mut World, st: &Step) -> Result<(), String> {
 }
 
 /// A first click that would turn the clicked slab into a double slab leaves the target empty.
-fn merge_check(w: &World, st: &Step) -> Result<(), String> {
+pub(crate) fn merge_check(w: &World, st: &Step) -> Result<(), String> {
     let Step::Place { pos, state, clicks, .. } = st else { return Ok(()) };
     let Some(c) = clicks.first().filter(|c| c.support != *pos) else { return Ok(()) };
     let name = split_state(state).0;
@@ -307,8 +316,15 @@ fn merge_check(w: &World, st: &Step) -> Result<(), String> {
 
 /// Run the whole plan and compare the final world with the schematic placed at the plan origin.
 pub fn simulate(plan: &Plan, schem: &Schematic) -> Result<SimReport, SimError> {
+    simulate_in(plan, schem, &[])
+}
+
+/// [`simulate`] for a plan that starts with the blocks `prebuilt` standing (the last phase of a
+/// cooperative build). `schem` is everything that must stand at the end, `prebuilt` included.
+pub fn simulate_in(plan: &Plan, schem: &Schematic, prebuilt: &[(BlockPos, String)]) -> Result<SimReport, SimError> {
     let o = plan.header.origin;
     let mut w = World::new(o.1, plan.header.start);
+    w.preload(prebuilt);
     if !w.standable(w.feet) {
         return Err(SimError { step: 0, msg: "start cell is not standable".into() });
     }
