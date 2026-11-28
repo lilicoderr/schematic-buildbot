@@ -17,6 +17,8 @@ mod build_plan;
 mod plan_cmds;
 #[path = "build_bot/run_cmd.rs"]
 mod run_cmd;
+#[path = "build_bot/undo_cmd.rs"]
+mod undo_cmd;
 #[path = "build_bot/ui/mod.rs"]
 mod ui;
 
@@ -171,6 +173,7 @@ fn main() {
             "simulate" => return plan_cmds::simulate_cmd(rest),
             "run" => return run_cmd::run_cmd(rest),
             "ui" => return ui::ui_cmd(rest),
+            "undo" => return undo_cmd::undo_cmd(rest),
             "materials" => return plan_cmds::materials_cmd(rest),
             _ => {}
         }

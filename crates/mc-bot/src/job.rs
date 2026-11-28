@@ -31,6 +31,11 @@ impl Job {
         self.dir.join("plan.progress.extras")
     }
 
+    /// Where the plan was put in the world (`dx dy dz`), kept after the build for `undo`.
+    pub fn offset(&self) -> PathBuf {
+        self.dir.join("plan.offset")
+    }
+
     /// Written when every step has run.
     pub fn done(&self) -> PathBuf {
         self.dir.join("done")
@@ -45,7 +50,7 @@ impl Job {
 
     /// Forget an earlier build (`--fresh`).
     pub fn reset(&self) {
-        for f in [self.plan(), self.progress(), self.extras(), self.done()] {
+        for f in [self.plan(), self.progress(), self.extras(), self.done(), self.offset()] {
             let _ = std::fs::remove_file(f);
         }
     }

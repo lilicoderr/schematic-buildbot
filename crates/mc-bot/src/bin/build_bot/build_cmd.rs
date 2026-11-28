@@ -108,7 +108,7 @@ fn build(args: &Args) -> Result<(), String> {
 }
 
 /// Where the plan goes in the world, walking there first when `--origin` asks for it.
-fn place_origin(bot: &mut PlayClient, plan: &Plan, origin: (i32, i32, i32)) -> Result<Offset, String> {
+pub(super) fn place_origin(bot: &mut PlayClient, plan: &Plan, origin: (i32, i32, i32)) -> Result<Offset, String> {
     let o = plan.header.origin;
     let off = Offset { dx: origin.0 - o.0, dy: origin.1 - o.1, dz: origin.2 - o.2 };
     let (from, start) = (feet_cell(bot.feet), off.cell(plan.header.start));
@@ -157,6 +157,9 @@ fn online(args: &Args, job: &Job, plan: &Plan, version: &Version, clean: bool) -
     };
     let offset = offset.unwrap_or_else(|| Offset::between(plan.header.start, feet_cell(bot.feet)));
     let from_step = saved.map_or(0, |s| s.step);
+    // so that `undo` knows where this build stands, also long after it finished
+    std::fs::write(job.offset(), format!("{} {} {}
+", offset.dx, offset.dy, offset.dz)).map_err(io)?;
     // saved before the first step too: an early interruption must keep the same place
     run_state::save(&job.progress(), fingerprint, from_step, offset).map_err(io)?;
     if !args.walk {

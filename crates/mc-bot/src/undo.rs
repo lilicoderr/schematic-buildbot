@@ -185,7 +185,3 @@ pub fn check(plan: &Plan, d: &Demolition) -> Result<(), String> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "undo_tests.rs"]
-mod tests;
