@@ -9,3 +9,4 @@ __pycache__/
 .buildbot-progress
 node_modules/
 /tools/viewer/out/
+/.buildbot/

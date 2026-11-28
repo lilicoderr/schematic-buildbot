@@ -78,7 +78,7 @@ fn parse_cells(list: &str) -> Vec<BlockPos> {
         .collect()
 }
 
-fn report(plan: &Plan, r: &Report, teleports: u32) {
+pub(super) fn report(plan: &Plan, r: &Report, teleports: u32) {
     let expected = plan.steps.iter().filter(|s| matches!(s, Step::Place { .. })).count();
     println!("{}", tr!("=== run finished ===", "=== 실행 종료 ==="));
     println!(

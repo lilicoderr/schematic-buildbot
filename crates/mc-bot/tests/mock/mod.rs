@@ -20,8 +20,20 @@ pub struct Peer {
 impl Peer {
     /// Accept the bot, log it in and teleport it onto the cell `spawn`.
     pub fn accept(listener: TcpListener, spawn: (i32, i32, i32)) -> Peer {
+        let mut p = Peer::in_play(&listener);
+        p.teleport(spawn, 1);
+        p
+    }
+
+    /// A raw connection, nothing read yet.
+    pub fn raw(listener: &TcpListener) -> Peer {
         let (stream, _) = listener.accept().unwrap();
-        let mut p = Peer { stream, inbox: Vec::new() };
+        Peer { stream, inbox: Vec::new() }
+    }
+
+    /// Accept a login and go through configuration; the caller sends what Play starts with.
+    pub fn in_play(listener: &TcpListener) -> Peer {
+        let mut p = Peer::raw(listener);
         p.recv().expect("handshake");
         p.recv().expect("login start");
         let mut ok = PacketBuf::new();
@@ -33,7 +45,6 @@ impl Peer {
         p.recv().expect("client information");
         p.send(ids().cb_config_finish_configuration, &PacketBuf::new());
         p.recv().expect("finish ack");
-        p.teleport(spawn, 1);
         p
     }
 

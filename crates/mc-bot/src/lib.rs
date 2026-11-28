@@ -16,6 +16,7 @@ pub mod gamemode;
 pub mod guard;
 pub mod i18n;
 pub mod ids;
+pub mod job;
 pub mod json;
 pub mod ledger;
 pub mod litematic;

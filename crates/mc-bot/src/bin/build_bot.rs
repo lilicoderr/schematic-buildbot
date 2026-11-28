@@ -5,6 +5,12 @@
 //! The bot walks on the ground (no flying, no speeding) and places supported blocks
 //! first. Works on creative-mode servers (it puts blocks in hand via set-creative-slot).
 
+#[path = "build_bot/build_args.rs"]
+mod build_args;
+#[path = "build_bot/build_cmd.rs"]
+mod build_cmd;
+#[path = "build_bot/build_plan.rs"]
+mod build_plan;
 #[path = "build_bot/plan_cmds.rs"]
 mod plan_cmds;
 #[path = "build_bot/run_cmd.rs"]
@@ -47,6 +53,9 @@ fn usage() -> String {
         "\
 build-bot — build a blueprint on a Minecraft offline-mode server
 
+ONE COMMAND (download, plan, check the server, build, verify; run again to resume):
+  build-bot build <file or URL> <host:port> [--name N] [--origin x,y,z] [--dry-run]
+
 USAGE:
   build-bot [host:port] [name] [blueprint]   build (default 127.0.0.1:25566, BuildBot)
   build-bot x x <blueprint> --dry-run        validate offline, no server needed
@@ -68,6 +77,9 @@ EXAMPLE:
   build-bot 127.0.0.1:25566 MyBot https://example.com/castle.schem",
         "\
 build-bot — 설계도를 Minecraft 오프라인 서버에 건축
+
+한 번에 짓기 (다운로드, 계획, 서버 점검, 건축, 검증. 다시 실행하면 이어서):
+  build-bot build <파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--dry-run]
 
 사용법:
   build-bot [host:port] [이름] [설계도]       건축 (기본 127.0.0.1:25566, BuildBot)
@@ -144,6 +156,7 @@ fn main() {
         let lang = rest.iter().position(|a| a == "--lang").and_then(|i| rest.get(i + 1)).cloned();
         i18n::set(i18n::detect(lang.as_deref()));
         match cmd {
+            "build" => return build_cmd::build_cmd(rest),
             "slice" => return plan_cmds::slice_cmd(rest),
             "simulate" => return plan_cmds::simulate_cmd(rest),
             "run" => return run_cmd::run_cmd(rest),
