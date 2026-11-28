@@ -63,6 +63,8 @@ build-bot — build a blueprint on a Minecraft offline-mode server
 
 ONE COMMAND (download, plan, check the server, build, verify; run again to resume):
   build-bot build <file or URL> <host:port> [--name N] [--origin x,y,z] [--dry-run]
+  build-bot undo <plan.bbplan> <host:port>      take down exactly what the bot placed
+  build-bot materials <file or URL>            items, stacks, shulker boxes
 
 WEB PAGE on this computer (drop a schematic, 3D preview, build, stop):
   build-bot ui [--port N] [--no-open]
@@ -91,6 +93,8 @@ build-bot — 설계도를 Minecraft 오프라인 서버에 건축
 
 한 번에 짓기 (다운로드, 계획, 서버 점검, 건축, 검증. 다시 실행하면 이어서):
   build-bot build <파일 또는 URL> <host:port> [--name 이름] [--origin x,y,z] [--dry-run]
+  build-bot undo <plan.bbplan> <host:port>      봇이 설치한 블록만 정확히 철거
+  build-bot materials <파일 또는 URL>          아이템, 스택, 셜커 상자
 
 이 컴퓨터의 웹 화면 (설계도 끌어다 놓기, 3D 미리보기, 건축, 중지):
   build-bot ui [--port 번호] [--no-open]

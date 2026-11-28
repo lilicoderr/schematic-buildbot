@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Safety
+- Site survey before building: loaded chunks around the footprint (plus 2 blocks) are decoded and checked; blocks in the
+  way, non-natural blocks nearby or missing ground stop the build with a bilingual report. `--force` overrides.
+- `--rotate 90|180|270` and `--mirror x|z` for `build`, with block states transformed (round-trip tested over all states).
+- `build-bot undo <plan> <host:port>`: removes only the blocks the bot placed and that still match, ground only, planned
+  top first and checked by the strict simulator; other blocks are never touched.
+- `build-bot materials <schematic>`: counts, stacks, shulker boxes.
+
 ### Web page
 - `build-bot ui`: a page on this computer (127.0.0.1 only): drop a `.schem` / `.litematic` / `.txt` or paste a link,
   3D preview with layer slider (the plan previewer, three.js 0.160.0 vendored, works offline), size, block types,

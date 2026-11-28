@@ -62,6 +62,8 @@ and the build continues at the same place.
 | `--lang en\|ko` | output language |
 | `--allow-partial` | build even if some blocks are unsupported, unreachable or would get another state |
 | `--fresh` | forget the saved progress (or the "already finished" mark) and start over |
+| `--force` | build although the site survey found blocks in the way (see Safety below) |
+| `--rotate 90\|180\|270`, `--mirror x\|z` | turn the blueprint clockwise (seen from above) and/or flip it, block states included |
 | `--version V`, `--wait-creative S`, `--delay-ms N`, `--walk`, `--state-dir D` | set the version yourself, change the creative-mode wait, slow down, do not sprint, keep job files elsewhere |
 
 ```text
@@ -79,6 +81,57 @@ server; survival mode was detected and switched with the printed command; the bo
 the same command run again: 2408/2408 states exact over RCON, 83,496 cells around the build all air, 0 kicks.
 `--origin` was checked with `stair-tower.txt` (a walk of about 20 blocks, 51/51 by the bot's own check). The online-mode,
 unsupported-version, cannot-connect and refused-login messages are tested against mock servers only.
+
+## Safety: survey, rotate, mirror, undo, materials
+
+**Site survey.** After connecting and before placing anything, `build` reads the chunk data the server sends (the bot
+decodes the chunk sections of all four supported releases) and checks the footprint plus a 2-block margin:
+
+* a cell the build, a pillar or a walk needs must be empty (air, grass or a one-layer snow cover); natural terrain in
+  such a cell still counts as in the way;
+* in the margin, natural terrain (dirt, stone, water, wild leaves, flowers ...) is ignored, any other block (planks, a
+  chest, a torch, a player-made wall ...) stops the build;
+* every footprint column needs ground that carries the player; cells in chunks the server did not send count as unknown.
+
+On any of these `build` prints what it found (counts per block, first positions, in English and Korean) and builds
+nothing. `--force` builds anyway, and the repair never touches blocks that stood beside the build. Resuming accepts
+the blocks the earlier run of the same build left.
+
+```bash
+build-bot build house.schem 127.0.0.1:25565 --rotate 90 --mirror x    # turn clockwise, then flip east/west
+build-bot materials house.schem                                       # items, stacks, shulker boxes
+build-bot undo .buildbot/house-<hash>/plan.bbplan 127.0.0.1:25565     # take it down again
+```
+
+**Rotate and mirror.** `--rotate` turns clockwise seen from above (north to east), `--mirror x` swaps east and west,
+`--mirror z` swaps north and south (rotation first). Positions and states move together: `facing`, `axis`, 16-step
+`rotation`, fence / pane / wall / redstone sides, rail and crafter / jigsaw orientation, and the handed ones that
+flip under a mirror (stair `shape`, door `hinge`, chest `type`). The tests run every one of the 26,684 block states
+through all twelve transforms (valid state of the same block), through four quarter turns and double mirrors (identity)
+and through mirror-turn-mirror (the opposite turn).
+
+**Undo.** `build-bot undo <plan.bbplan> <host:port>` removes exactly what the bot placed: the blocks the plan leaves
+standing (of an unfinished build, those of the saved step, plus loose scaffold). A block is taken only if the server
+still shows it as the bot placed it. Air means it is gone already (run it again at any time), another block means
+someone replaced it and it stays, and everything else around stays too. The way down is planned top first with the same
+ground-only navigator (temporary pillars where needed, removed again) and checked by the strict simulator before the first
+click, with a demolition set: only these blocks and scaffold may be broken, nothing standing may pop off, the bot always
+has ground under it. `build` keeps `plan.offset` next to the plan so undo knows where the build stands; otherwise give
+`--origin x,y,z` (world position of the blueprint's (0,0,0) corner).
+
+**Materials.** `build-bot materials <schematic>` lists items, counts, stacks (`2x64+22`) and how many 27-slot shulker boxes
+hold them. Doors, beds and tall plants count once, double slabs twice, candles by count, potted plants as pot plus plant,
+water and lava not at all.
+
+Checked live on 2026-11-28 (local vanilla 1.21.1, creative, offline, 2 GB): a block of planks inside the footprint made
+`build` stop with the report and leave the block alone; a blueprint with stairs, a door (hinge), furnace, chest and an
+`axis=x` log built with `--rotate 90 --mirror x` was exact over RCON (15/15 states, checked against a hand-computed
+transposition); `undo` then left the area all air except an oak planks block next to the build, a block that stood below
+the build and a gold block somebody had put in place of one of the bot's blocks, all three untouched; a 9-high wall (scaffold)
+went the same way (45 blocks, 0 left). Only 1.21.1 was tried live; the chunk decoder has byte-level unit tests for the
+layouts of 1.20.4, 1.21.1, 1.21.4 and 26.3. Not tried live: undo of an interrupted build, undo of the large factory (only planned
+offline: the small factory's 2,408 blocks come down in a simulator-clean plan), custom world heights (their chunks are
+reported as unreadable, so the survey stops).
 
 ## Web page: `build-bot ui`
 
