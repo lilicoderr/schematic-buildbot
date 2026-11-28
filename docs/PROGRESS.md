@@ -270,3 +270,48 @@ blueprints: every state exact over RCON on all three, small factory 2408/2408 (4
 `white-list` out of the 26.3 server.properties, so every login was refused. Logs and harness (outside the repo):
 `scratchpad/reverify/`. Test servers on 127.0.0.1:25567 / 25577, one at a time, each stopped via RCON.
 
+
+## Update 2026-11-28: banded build order, large factory live at 8.0 blocks/s
+
+Newest state. Target was 5.5 blocks/s on the large factory.
+
+Measured on the previous plan: 11,712 of 21,197 moves were level moves leading to a placement, 4,400 led to a BREAK,
+4,300 to a SUPPORT / PILLAR. Cause: a band of 4 layers was still finished layer by layer inside each tile, so the bot
+walked along the same walls once per layer. Cutting corners in level walks was estimated at only about 95 s and not done.
+Walking speed, jumps and the executor are unchanged.
+
+Change (`tour.rs`, `batch.rs`, `slice.rs`): `Order::BANDED` = 8x8 tiles, nearest-neighbour order in 3D inside a tile's
+4-layer band, and any block of the oldest pending block's band that is ready and in reach is placed before walking. If
+that order fails or leaves blocks out, `slice` plans again with `Order::LAYERED` (the previous order). No repo
+blueprint needs the second try; a test plans the small factory with it. In `exact_states_mock.rs` two fault
+injection points moved (they depend on the placement order).
+
+| offline, previous -> new | large | small |
+|---|---|---|
+| moves | 21,197 -> 11,581 | 1,968 -> 876 |
+| estimated walking | 4,058 -> 2,244 s | 413 -> 181 s |
+| estimated total | 4,721 -> 2,875 s (-39%) | 468 -> 237 s (-49%) |
+| scaffold pillars / breaks | 693 / 5,506 -> 631 / 4,901 | 44 / 279 -> 48 / 249 |
+
+All six repo blueprints: strict simulation passes, unreachable 0, default-state fallbacks 0, state mismatches 0. Large
+plan sliced twice: byte-identical.
+
+Tried (offline, scratch knobs, not committed): 8x8 tiles with the old layered order alone gave 3,644 s (large). With upward-only batching, band 5
+gave 2,856 s, but some of its neighbouring settings and band 6 left scaffold that could not be removed; 4 was kept.
+Cleanup is still parameter-sensitive (other failures: standing-score slack 8 and count-all standing score at band 5, band
+4 with upward-only batching and TIDY_BELOW 0).
+
+Live (vanilla 1.21.1, 2 GB, below-normal, empty world each time, no viewer, no resume; `--verify`):
+
+| live | previous | new |
+|---|---|---|
+| small factory | 464 s, 5.2 blocks/s | 235 s, 10.3 blocks/s, 2408/2408 exact |
+| large factory | 4,646 s, 4.8 blocks/s | 2,822 s, 8.0 blocks/s, 22,481/22,481 exact |
+
+Both runs: 0 refused, 0 re-placed (all checkpoints), 0 kicks, 0 differing states, no "moved too quickly" / "moved
+wrongly" / "Can't keep up" in the server log, `verify_rcon.py` exact right after the build, surroundings all air (83,496
+and 721,018 cells). Large: 16:56:42 to 17:43:44, 43,954 steps, move 2,186 s / 11,581, pillar 119 s, support 64 s, place
+338 s, break 83 s; 37/37 copper unaged at check time; world origin 3 65 -2. Logs (outside the repo):
+`scratchpad/speed/{small,large}/run.log`. Test server stopped via RCON. Not re-run live with this order: 1.20.4, 1.21.4,
+26.3. No new renders (same schematic).
+

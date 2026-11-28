@@ -15,6 +15,7 @@ use crate::scaffold::{Mover, Site};
 use crate::schematic::{Block, Schematic};
 use crate::sim;
 use crate::support;
+use crate::tour::Order;
 use crate::world::{Face, within_reach, BlockPos, Vec3};
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -119,10 +120,32 @@ pub fn slice(schem: &Schematic, origin: (i32, i32, i32), protocol: i32) -> Resul
 }
 
 /// Like [`slice`], under a time and memory [`Budget`] (progress lines every 10 s on stderr).
+///
+/// [`Order::BANDED`] walks much less; if it ends in a dead end (scaffold that cannot be taken
+/// down, nowhere to stand) or leaves blocks out, the structure is planned again with
+/// [`Order::LAYERED`] and the better result is kept.
 pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, budget: &mut Budget) -> Result<Plan, String> {
     TIMES.with(|t| t.set(Times::default()));
+    let missing = |p: &Plan| p.header.unreachable.len();
+    let banded = slice_ordered(schem, origin, protocol, budget, Order::BANDED);
+    if banded.as_ref().is_ok_and(|p| missing(p) == 0) {
+        return banded;
+    }
+    if let Err(e) = &banded {
+        eprintln!("  banded build order failed ({e}); planning layer by layer");
+    }
+    match (banded, slice_ordered(schem, origin, protocol, budget, Order::LAYERED)) {
+        (Ok(a), Ok(b)) => Ok(if missing(&b) < missing(&a) { b } else { a }),
+        (Ok(a), Err(_)) => Ok(a),
+        (Err(_), Ok(b)) => Ok(b),
+        (Err(first), Err(second)) => Err(format!("{second} (banded order: {first})")),
+    }
+}
+
+/// [`slice_with`] for one build order only.
+pub fn slice_ordered(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, budget: &mut Budget, kind: Order) -> Result<Plan, String> {
     let t_tour = std::time::Instant::now();
-    let order = crate::tour::tour_order(schem);
+    let order = crate::tour::tour_order(schem, kind);
     add(|_| {}, t_tour, |t| &mut t.tour);
     let start = (origin.0 - 2, origin.1, origin.2 - 2);
     let at = |b: &Block| BlockPos::new(origin.0 + b.pos.x, origin.1 + b.pos.y, origin.2 + b.pos.z);
@@ -153,7 +176,7 @@ pub fn slice_with(schem: &Schematic, origin: (i32, i32, i32), protocol: i32, bud
     loop {
         // place everything in reach before walking on; a block is "ready" when it has something to
         // rest on and its wanted state can be produced right now
-        let next = queue.take(&positions, rec.feet, |k| {
+        let next = queue.take(&positions, rec.feet, |a, b| kind.together(a, b, floor), |k| {
             let p = positions[k];
             let solid = |q: BlockPos| q.y < origin.1 || placed.contains(&q);
             let rests = p.y == origin.1 || [p.below(), p.offset(Face::North), p.offset(Face::South), p.offset(Face::East), p.offset(Face::West)].iter().any(|q| placed.contains(q));

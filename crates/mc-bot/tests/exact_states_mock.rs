@@ -110,7 +110,7 @@ fn wrong_merged_changed_and_stray_blocks_are_noticed_and_put_right() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let spawn = plan.header.start;
-    let faults = Faults { wrong: 4, merge: 15, neighbour: 18 };
+    let faults = Faults { wrong: 4, merge: 20, neighbour: 22 };
     let for_server = wanted.clone();
     let server = thread::spawn(move || serve(listener, spawn, for_server, faults));
 

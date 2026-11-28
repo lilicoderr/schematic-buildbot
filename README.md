@@ -76,9 +76,8 @@ The plan format is in [docs/PLAN_FORMAT.md](docs/PLAN_FORMAT.md). The bot stays 
 jumping up one block, by temporary scaffold pillars (jump, place under the feet, land) or scaffold bridges, and every scaffold
 block is broken again before the plan ends.
 
-Measured on a local vanilla 1.21.1 server (small factory, 2408 blocks): sliced in 0.3 s with 0 unreachable blocks,
-run in 748 s (3.2 blocks/s, faster at the start and slower where many scaffolds are needed), 2408/2408 placements confirmed
-by block updates, 0 re-placed, 0 kicks. For the 22k-block factory see the next section.
+Measured on a local vanilla 1.21.1 server (small factory, 2408 blocks): sliced in 0.1 s with 0 unreachable blocks,
+run in 235 s (10.3 blocks/s), 2408/2408 states exact over RCON, 0 re-placed, 0 kicks. For the 22k-block factory see the next section.
 Neighbour-derived block states (stair shape, fence and pane connections) cannot be chosen by a client; the slicer counts them.
 
 ## Large factory: live build (22,481 blocks)
@@ -93,14 +92,13 @@ Neighbour-derived block states (stair shape, fence and pane connections) cannot 
 1.21.1 server (creative, offline, 2 GB heap, default gamerules, 2026-11-28), from an empty world, **in one run with no
 resume**, with no viewer or other player connected. (The renders above are of an earlier build of the same schematic.)
 
-* 22,481 / 22,481 placed, 4,646 s (1 h 17 min), **4.8 blocks/s**, 0 kicks, 0 refused, nothing missing, no lag or
-  movement warning in the server log. Walking took 3,979 s of it (21,197 moves; the slicer estimated 4,058 s walking,
-  4,721 s total). Early flat layers often run at 15 to 26 blocks/s, the sparse upper layers mostly at 2 to 10.
+* 22,481 / 22,481 placed, 2,822 s (47 min), **8.0 blocks/s**, 0 kicks, 0 refused, nothing missing, no lag or
+  movement warning in the server log. Walking took 2,186 s of it (11,581 moves; the slicer estimated 2,244 s walking,
+  2,875 s total), at the same vanilla sprint and jump speed as before: the gain comes from the build order. Median
+  speed per 100 placements: 22 blocks/s in the first third, 11 in the middle, 16 in the last.
 * The run checks every step and every block change the server reports against the exact planned state, and repairs
   at once. This run needed **no repair**, and its final report lists 0 differing states.
-* Independent check over RCON (`tools/verify_rcon.py`): **22,481 / 22,481 states exact**. It ran about a minute after
-  the build, after a restart of the test server on the saved world (the wrapper script that was to call it failed on
-  the console text encoding). Nothing was built or changed in between.
+* Independent check over RCON (`tools/verify_rcon.py`), right after the build: **22,481 / 22,481 states exact**.
 * Leftover scaffold: 721,018 cells around the build that are not in the schematic (16 blocks to each side and 8 above,
   from the ground up) were queried; all are air.
 * Copper: all 37 `copper_block`s were unaged at the time of the check. `randomTickSpeed` was left at the default 3, so
@@ -108,8 +106,9 @@ resume**, with no viewer or other player connected. (The renders above are of an
   build was seen and placed again by the same checks; nothing keeps it unaged after the bot has left.
 * This is one run on one schematic, one server version and a flat world; it is not a guarantee for other builds.
 * History with this schematic: 6,898 s with the older layer-by-layer order (22,479 exact), then 4,685 s with the
-  4-layers-per-16x16-tile order (22,475 exact, 6 declared log-axis fallbacks). The planner has since removed those
-  fallbacks with temporary blocks.
+  4-layers-per-16x16-tile order, one layer after another (22,475 exact, 6 declared log-axis fallbacks), and 4,646 s
+  (4.8 blocks/s, 22,481 exact) once temporary blocks had removed those fallbacks. The current order finishes a band
+  of 4 layers in an 8x8 tile in any layer order, so a wall is built from one spot instead of once per layer.
 
 An earlier build the same day, also with the older order, needed two resumes (7,338 s active, 3.1 blocks/s). It exposed a planner bug (a slab clicked
 onto an equal slab) and a walk-only way back after repairs; both are fixed. Its checkpoints only counted non-air blocks, so
@@ -181,13 +180,13 @@ what ran on a local vanilla server of that release (creative, offline).
 
 | Version | Protocol | Tables + unit tests | Live |
 |---|---|---|---|
-| 1.20.4 | 765 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 466 s |
+| 1.20.4 | 765 | ✅ | ✅ planner of `48ee50e`: short builds; 2408-block factory 2408/2408 exact, 466 s |
 | 1.21 | 767 | ✅ (shares 1.21.1's) | not run separately |
-| 1.21.1 | 767 | ✅ | ✅ current planner: 2408-block factory 2408/2408 exact, 22,481-block factory 22,481/22,481 exact; short builds with an older planner |
-| 1.21.4 | 769 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 464 s |
-| 26.3 | 777 | ✅ | ✅ current planner: short builds; 2408-block factory 2408/2408 exact, 466 s |
+| 1.21.1 | 767 | ✅ | ✅ current planner: 22,481-block factory 22,481/22,481 exact, 2408-block factory 2408/2408 exact; short builds with an older planner |
+| 1.21.4 | 769 | ✅ | ✅ planner of `48ee50e`: short builds; 2408-block factory 2408/2408 exact, 464 s |
+| 26.3 | 777 | ✅ | ✅ planner of `48ee50e`: short builds; 2408-block factory 2408/2408 exact, 466 s |
 
-Re-verified on 2026-11-28 with the planner of `48ee50e` on 1.20.4, 1.21.4 and 26.3 (code `7d7ce4c`, through the plan
+The later build-order change (see the large factory above) was run live on 1.21.1 only. Re-verified on 2026-11-28 with the planner of `48ee50e` on 1.20.4, 1.21.4 and 26.3 (code `7d7ce4c`, through the plan
 pipeline, `run --verify`, each build on a cleared area, then compared block by block over RCON): `factory-small.schem`
 2408/2408 (against the schematic), `cottage.txt` 25/25, `stair-tower.txt` 51/51, `state-lab.txt` 27/27 (including the
 door's upper half), `pixel-heart.txt` 27/27, a 5-wide 9-high wall 45/45 (builds and removes scaffold) and three single

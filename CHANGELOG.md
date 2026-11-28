@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- `slice`: inside a band of 4 layers of an 8x8 tile, blocks are no longer placed layer by layer, so one standing spot
+  serves several layers (22,481-block factory live: 4,646 s to 2,822 s, exact). If this order cannot be completed,
+  the slicer plans again with the previous layer-by-layer order.
 - `run` compares every step and every reported block change with the exact planned state (once the server acknowledged the
   clicks) and repairs wrong, missing and stray blocks at once; checkpoints audit all known positions. It used to only
   check at checkpoints that placed blocks were not air.

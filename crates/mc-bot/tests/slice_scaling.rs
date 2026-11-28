@@ -3,6 +3,7 @@
 
 use mc_bot::plan::Step;
 use mc_bot::schematic::{Block, Schematic};
+use mc_bot::tour::Order;
 use mc_bot::world::BlockPos;
 use mc_bot::{guard::Budget, slice};
 use std::time::{Duration, Instant};
@@ -56,13 +57,24 @@ fn the_large_factory_is_planned_completely_within_its_limits() {
     let plan = slice::slice_with(&schem, (2, 64, 2), 767, &mut budget).expect("planned in time, simulates clean");
     assert!(plan.header.unreachable.is_empty(), "{:?}", plan.header.unreachable);
     mc_bot::sim::simulate(&plan, &schem).expect("strict simulation");
-    // walking decides the live build time: 21197 moves, 5498 scaffold breaks and 4058 s of
+    // walking decides the live build time: 11581 moves, 4901 scaffold breaks and 2244 s of
     // estimated walking when this was written (docs/PROGRESS.md); do not get worse
     let count = |f: fn(&Step) -> bool| plan.steps.iter().filter(|s| f(s)).count();
     let moves = count(|s| matches!(s, Step::Move(_)));
     let breaks = count(|s| matches!(s, Step::Break(_)));
     let walking = mc_bot::shorten::move_seconds(&plan);
-    assert!(moves <= 21_400, "{moves} moves");
-    assert!(breaks <= 5_600, "{breaks} scaffold breaks");
-    assert!(walking <= 4_100.0, "{walking:.0} s of walking");
+    assert!(moves <= 11_800, "{moves} moves");
+    assert!(breaks <= 5_000, "{breaks} scaffold breaks");
+    assert!(walking <= 2_300.0, "{walking:.0} s of walking");
+}
+
+/// The second-try order is only used when the banded one fails, so it is exercised here.
+#[test]
+fn the_layered_order_still_plans_the_small_factory() {
+    let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../blueprints/factory-small.schem")).unwrap();
+    let schem = mc_bot::schem::parse(&bytes, "factory-small").unwrap();
+    let mut budget = Budget::new(Duration::from_secs(120), 2048 << 20);
+    let plan = slice::slice_ordered(&schem, (2, 64, 2), 767, &mut budget, Order::LAYERED).expect("planned");
+    assert!(plan.header.unreachable.is_empty(), "{:?}", plan.header.unreachable);
+    mc_bot::sim::simulate(&plan, &schem).expect("strict simulation");
 }
