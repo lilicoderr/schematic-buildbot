@@ -20,7 +20,12 @@ use std::time::Duration;
 const MAX_ORIGIN_WALK: i32 = 128;
 
 pub fn build_cmd(raw: &[String]) {
-    let args = build_args::parse(raw).unwrap_or_else(|e| fail(e));
+    let mut raw = raw.to_vec();
+    if raw.iter().any(|a| a == "--ask") {
+        raw.retain(|a| a != "--ask");
+        raw = super::ask::ask_console(&raw).unwrap_or_else(|e| fail(e));
+    }
+    let args = build_args::parse(&raw).unwrap_or_else(|e| fail(e));
     if let Err(e) = build(&args) {
         fail(e);
     }

@@ -5,6 +5,8 @@
 //! The bot walks on the ground (no flying, no speeding) and places supported blocks
 //! first. Works on creative-mode servers (it puts blocks in hand via set-creative-slot).
 
+#[path = "build_bot/ask.rs"]
+mod ask;
 #[path = "build_bot/build_args.rs"]
 mod build_args;
 #[path = "build_bot/build_cmd.rs"]
